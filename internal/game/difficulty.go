@@ -60,7 +60,14 @@ func (s *Session) advanceGlobalDifficulty() []Outbound {
 	return out
 }
 
-// expireTimeouts は制限時間を超えた通常お題を打ち切り、積み残し（+1）としてスタックへ加算する。
+// expireTimeouts は制限時間を超えたお題を種別問わず打ち切る（#78）。
+// 種別で後処理が違う:
+//   - 通常     : 積み残し(+1)＋先読み在庫を N に補充（#81）。
+//   - 被弾      : 画面から除去するだけ。着弾時に stack へ加算済みのため増減せず、次のお題も出さない
+//     （時間内にクリアできなかった＝負担が残る。要マネージャー再検討）。
+//   - トラップ  : 未処理トラップは失敗扱いとし TrapMissPenalty を加算（クリア時ミスと同待遇。要再検討）。
+//
+// いずれも DakenExpired を送ってクライアント側の凍結（同じお題が消えず次へ進まない）を解消する。
 func (s *Session) expireTimeouts() []Outbound {
 	var out []Outbound
 	for _, pid := range s.order {
@@ -68,20 +75,31 @@ func (s *Session) expireTimeouts() []Outbound {
 		if !ps.alive {
 			continue
 		}
-		var expired []proto.DakenId
-		for id, d := range ps.issued {
-			if d.typ == proto.DakenNormal && s.elapsedMs >= d.issuedAtMs+int64(d.timeLimitMs) {
-				expired = append(expired, id)
+		// キュー順（＝発行順・決定的）に時間切れを集める。
+		var expired []*issuedDaken
+		for _, d := range ps.issued {
+			if s.elapsedMs >= d.issuedAtMs+int64(d.timeLimitMs) {
+				expired = append(expired, d)
 			}
 		}
-		sort.Slice(expired, func(i, j int) bool { return expired[i] < expired[j] })
-		for _, id := range expired {
-			delete(ps.issued, id)
-			out = append(out, to(pid, proto.DakenExpired{DakenId: id}))
-			out = append(out, s.addStack(ps, 1)...) // 積み残し（通常ダケン1個分）
-			if ps.alive {                            // 脱落してなければ次のお題
-				nd := s.issueDaken(ps, proto.DakenNormal)
-				out = append(out, to(pid, proto.DakenIssued{Daken: []proto.DakenInstance{nd}}))
+		// 時間切れ（クリア未達）は連続を断つ（#77）。1tickで複数切れても1回だけリセット・通知する。
+		if len(expired) > 0 && ps.p.Combo() > 0 {
+			oc := ps.p.ResetCombo()
+			out = append(out, to(pid, proto.ComboUpdated{ComboValue: 0, Delta: oc.Delta, Reason: proto.ComboMiss}))
+		}
+		for _, d := range expired {
+			ps.removeIssued(d.id)
+			out = append(out, to(pid, proto.DakenExpired{DakenId: d.id}))
+			switch d.typ {
+			case proto.DakenNormal:
+				out = append(out, s.addStack(ps, 1)...)             // 積み残し（通常ダケン1個分）
+				if rest := s.refillNormalStock(ps); len(rest) > 0 { // 先読み在庫を N に戻す（#81）
+					out = append(out, to(pid, proto.DakenIssued{Daken: rest}))
+				}
+			case proto.DakenTrap:
+				out = append(out, s.addStack(ps, s.params.Stack.TrapMissPenalty)...)
+			case proto.DakenEnemySent:
+				// 除去のみ。stack は着弾時に加算済みのため触らない。
 			}
 		}
 	}

@@ -128,11 +128,6 @@ func (r *Room) handle(in inbound) []game.Outbound {
 		if json.Unmarshal(in.env.Payload, &m) == nil {
 			return r.session.ApplyDakenClear(in.pid, m)
 		}
-	case proto.TypeAttackRequest:
-		var m proto.AttackRequest
-		if json.Unmarshal(in.env.Payload, &m) == nil {
-			return r.session.ApplyAttack(in.pid, m)
-		}
 	case proto.TypeStrategySelect:
 		var m proto.StrategySelect
 		if json.Unmarshal(in.env.Payload, &m) == nil {
@@ -179,10 +174,6 @@ func envelopeOf(msg any) (proto.Envelope, bool) {
 		typ = proto.TypeDifficultyUpdated
 	case proto.AttackIncoming:
 		typ = proto.TypeAttackIncoming
-	case proto.AttackFailed:
-		typ = proto.TypeAttackFailed
-	case proto.OffsetResolved:
-		typ = proto.TypeOffsetResolved
 	case proto.DakenStackUpdated:
 		typ = proto.TypeDakenStackUpdated
 	case proto.KoNotified:

@@ -11,8 +11,8 @@ import (
 
 type stubWords struct{}
 
-func (stubWords) Next(int, *rand.Rand) Word  { return Word{Text: "ねこ", KeystrokeCount: 4} }
-func (stubWords) NextTrap(*rand.Rand) Word    { return Word{Text: "trap", KeystrokeCount: 10} }
+func (stubWords) Next(int, *rand.Rand) Word { return Word{Text: "ねこ", KeystrokeCount: 4} }
+func (stubWords) NextTrap(*rand.Rand) Word  { return Word{Text: "trap", KeystrokeCount: 10} }
 
 // stubStrategy: Id と、対象を返す関数を差し替えられるテスト用作戦。
 type stubStrategy struct {
@@ -20,7 +20,7 @@ type stubStrategy struct {
 	fn func(TargetingContext) []PlayerId
 }
 
-func (s stubStrategy) Id() int                                { return s.id }
+func (s stubStrategy) Id() int                                     { return s.id }
 func (s stubStrategy) SelectTargets(c TargetingContext) []PlayerId { return s.fn(c) }
 
 func newTestSession(t *testing.T, ids ...string) *Session {
@@ -107,59 +107,79 @@ func TestSession_ApplyDakenClear_UnknownDakenIdIgnored(t *testing.T) {
 	}
 }
 
-func TestSession_ApplyAttack_NoComboFails(t *testing.T) {
+// #77 ノーミスクリアで攻撃発火。コンボは消費されず（伸び続ける）、対象へ予告が飛ぶ。
+func TestSession_ClearFiresAttack(t *testing.T) {
 	s := newTestSession(t, "a", "b")
-	s.Start()
-	res := s.ApplyAttack("a", proto.AttackRequest{})
-	af, _, ok := find[proto.AttackFailed](res)
-	if !ok || af.Reason != proto.FailNoCombo {
-		t.Fatalf("コンボ0で NoCombo が返るべき: %+v ok=%v", af, ok)
-	}
-}
+	da := startAndDaken(t, s, "a")
 
-func TestSession_ApplyAttack_EmitsWarningAndConsumes(t *testing.T) {
-	s := newTestSession(t, "a", "b")
-	out := s.Start()
-	// a にコンボを持たせる。
-	var da proto.DakenId
-	for _, o := range out {
-		if ms, ok := o.Msg.(proto.MatchStart); ok && o.To.PlayerId == "a" {
-			da = ms.InitialDaken.DakenId
-		}
-	}
-	s.ApplyDakenClear("a", proto.DakenClearReport{DakenId: da}) // combo=14
+	res := s.ApplyDakenClear("a", proto.DakenClearReport{DakenId: da}) // combo=14
 
-	res := s.ApplyAttack("a", proto.AttackRequest{})
-	// 全消費で ComboUpdated(Consumed)。
-	if cu, _, ok := find[proto.ComboUpdated](res); !ok || cu.Reason != proto.ComboConsumed || cu.ComboValue != 0 {
-		t.Fatalf("全消費 ComboUpdated 不備: %+v ok=%v", cu, ok)
+	// コンボは消費されない（Reason=Clear で加算、値が残る）。
+	if cu, _, ok := find[proto.ComboUpdated](res); !ok || cu.Reason != proto.ComboClear || cu.ComboValue != 14 {
+		t.Fatalf("クリアで加算 ComboUpdated 不備: %+v ok=%v", cu, ok)
 	}
-	// b へ AttackIncoming。
+	if s.players["a"].p.Combo() != 14 {
+		t.Fatalf("攻撃してもコンボは消費されない: got %d, want 14", s.players["a"].p.Combo())
+	}
+	// b へ AttackIncoming（威力=attackPower(14,0)=14）。
 	ai, toPid, ok := find[proto.AttackIncoming](res)
-	if !ok || toPid != "b" || ai.AttackerId != "a" || ai.GraceMs != DefaultParameters().Attack.WarningGraceMs {
+	if !ok || toPid != "b" || ai.AttackerId != "a" || ai.Power != 14 || ai.GraceMs != DefaultParameters().Attack.WarningGraceMs {
 		t.Fatalf("AttackIncoming 不備: %+v to=%s ok=%v", ai, toPid, ok)
 	}
 }
 
-func TestSession_ApplyAttack_NoTargetKeepsCombo(t *testing.T) {
-	// 生存が自分だけ → 対象不成立でコンボ非消費。
+// #77 ミスクリアはコンボを0にリセットし、攻撃を出さない。
+func TestSession_MissResetsComboNoAttack(t *testing.T) {
 	s := newTestSession(t, "a", "b")
-	out := s.Start()
-	var da proto.DakenId
-	for _, o := range out {
-		if ms, ok := o.Msg.(proto.MatchStart); ok && o.To.PlayerId == "a" {
-			da = ms.InitialDaken.DakenId
-		}
+	da := startAndDaken(t, s, "a")
+	r1 := s.ApplyDakenClear("a", proto.DakenClearReport{DakenId: da}) // combo=14, 次お題発行
+	di, _, ok := find[proto.DakenIssued](r1)
+	if !ok || len(di.Daken) == 0 {
+		t.Fatalf("クリアで次のお題が発行されるべき")
 	}
-	s.ApplyDakenClear("a", proto.DakenClearReport{DakenId: da}) // combo=14
-	s.eliminateWithKO(s.players["b"], nil)
+	// 次のお題をミスクリア。
+	res := s.ApplyDakenClear("a", proto.DakenClearReport{DakenId: di.Daken[0].DakenId, IsMiss: true, MissCount: 1})
 
-	res := s.ApplyAttack("a", proto.AttackRequest{})
-	if af, _, ok := find[proto.AttackFailed](res); !ok || af.Reason != proto.FailNoTarget {
-		t.Fatalf("対象不成立で NoTarget が返るべき: %+v ok=%v", af, ok)
+	if s.players["a"].p.Combo() != 0 {
+		t.Fatalf("ミスでコンボ0リセットすべき: got %d", s.players["a"].p.Combo())
+	}
+	if cu, _, ok := find[proto.ComboUpdated](res); !ok || cu.Reason != proto.ComboMiss || cu.ComboValue != 0 {
+		t.Fatalf("ミス ComboUpdated 不備: %+v ok=%v", cu, ok)
+	}
+	if _, _, ok := find[proto.AttackIncoming](res); ok {
+		t.Fatalf("ミスクリアでは攻撃を出さない")
+	}
+}
+
+// #77 対象不成立（生存が自分だけ）なら攻撃は出ず、コンボは維持される。
+func TestSession_ClearNoTargetNoAttack(t *testing.T) {
+	s := newTestSession(t, "a", "b")
+	da := startAndDaken(t, s, "a")
+	s.eliminateWithKO(s.players["b"], nil) // b を退場させ生存を a だけに
+
+	res := s.ApplyDakenClear("a", proto.DakenClearReport{DakenId: da}) // combo=14
+	if _, _, ok := find[proto.AttackIncoming](res); ok {
+		t.Fatalf("対象不成立では攻撃を出さない")
 	}
 	if s.players["a"].p.Combo() != 14 {
-		t.Fatalf("不発時コンボは消費されない: got %d, want 14", s.players["a"].p.Combo())
+		t.Fatalf("攻撃不発でもコンボは維持: got %d, want 14", s.players["a"].p.Combo())
+	}
+}
+
+// #80 試合中の順位: 生存者は強さ順(キル数優先)で1..、脱落者は脱落時の確定順位。
+func TestCurrentRanks_LiveByStrengthDeadByDeathRank(t *testing.T) {
+	s := newTestSession(t, "a", "b", "c")
+	s.Start()
+	s.eliminateWithKO(s.players["c"], nil) // c 脱落 → rank=3（生存2人の下）
+	s.players["a"].koCount = 1             // a を b より強く
+
+	sum, _ := s.Snapshot()
+	rank := map[proto.PlayerId]int{}
+	for _, p := range sum {
+		rank[p.PlayerId] = p.Rank
+	}
+	if rank["a"] != 1 || rank["b"] != 2 || rank["c"] != 3 {
+		t.Fatalf("順位不備: a=%d b=%d c=%d, want 1,2,3", rank["a"], rank["b"], rank["c"])
 	}
 }
 
@@ -192,12 +212,12 @@ func clearOnce(t *testing.T, s *Session, pid PlayerId, dakenId proto.DakenId, mi
 func TestSession_GameOverTypingStats_Winner(t *testing.T) {
 	s := newTestSession(t, "a", "b")
 	d := startAndDaken(t, s, "a")
-	d = clearOnce(t, s, "a", d, 0)  // combo 14, cleared 1, maxCombo 14
-	d = clearOnce(t, s, "a", d, 0)  // combo 28, cleared 2, maxCombo 28
-	_ = clearOnce(t, s, "a", d, 2)  // combo 28-3*2=22, cleared 3, totalMiss +2, maxCombo は 28 のまま
+	d = clearOnce(t, s, "a", d, 0) // combo 14, cleared 1, maxCombo 14
+	d = clearOnce(t, s, "a", d, 0) // combo 28, cleared 2, maxCombo 28
+	_ = clearOnce(t, s, "a", d, 2) // ミスで combo 0 リセット, cleared 3, totalMiss +2, maxCombo は 28 のまま
 
-	if s.players["a"].p.Combo() != 22 {
-		t.Fatalf("前提: 減衰後コンボ=22 のはず, got %d", s.players["a"].p.Combo())
+	if s.players["a"].p.Combo() != 0 {
+		t.Fatalf("前提: ミスでコンボ0リセットのはず, got %d", s.players["a"].p.Combo())
 	}
 
 	s.eliminateWithKO(s.players["b"], nil)
@@ -219,7 +239,7 @@ func TestSession_GameOverTypingStats_Eliminated(t *testing.T) {
 	d := startAndDaken(t, s, "b")
 	s.Tick(200)                    // 経過時間を進める（2人生存中は終了しない）
 	d = clearOnce(t, s, "b", d, 0) // cleared 1, combo 14, maxCombo 14
-	_ = clearOnce(t, s, "b", d, 1) // cleared 2, totalMiss 1, combo 14-3=11, maxCombo は 14 のまま
+	_ = clearOnce(t, s, "b", d, 1) // cleared 2, totalMiss 1, ミスで combo 0, maxCombo は 14 のまま
 
 	out := s.eliminateWithKO(s.players["b"], nil)
 	go1, toPid, ok := find[proto.GameOver](out)

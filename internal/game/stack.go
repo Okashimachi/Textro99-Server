@@ -1,6 +1,10 @@
 package game
 
-import "textro99/internal/proto"
+import (
+	"sort"
+
+	"textro99/internal/proto"
+)
 
 // stack.go は【#21c】ダケンスタックの増減・トラップ誘発（ハイウォーターマーク）・脱落確定。
 
@@ -12,13 +16,31 @@ func (s *Session) landReceived(ps *playerState, count int, attacker PlayerId) []
 	}
 	a := attacker
 	ps.lastImpactor = &a
-	daken := make([]proto.DakenInstance, 0, count)
+	insts := make([]proto.DakenInstance, 0, count)
+	ds := make([]*issuedDaken, 0, count)
 	for i := 0; i < count; i++ {
-		daken = append(daken, s.issueDaken(ps, proto.DakenEnemySent))
+		d, inst := s.newDaken(ps, proto.DakenEnemySent)
+		ds = append(ds, d)
+		insts = append(insts, inst)
 	}
-	out := []Outbound{to(ps.id, proto.DakenIssued{Daken: daken})}
+	// 被弾は「現在＋次数手」を崩さないよう offset 手先へ割り込ませる（#81）。
+	at := s.damageInsertPos(ps)
+	ps.insertIssuedAt(at, ds)
+	out := []Outbound{to(ps.id, proto.DakenIssued{Daken: insts, InsertIndex: &at})}
 	out = append(out, s.addStack(ps, count)...)
 	return out
+}
+
+// damageInsertPos は被弾ダケンの割り込み位置＝min(DamageInsertOffset, キュー長)。短ければ末尾。
+func (s *Session) damageInsertPos(ps *playerState) int {
+	at := s.params.Odai.DamageInsertOffset
+	if at < 0 {
+		at = 0
+	}
+	if at > len(ps.issued) {
+		at = len(ps.issued)
+	}
+	return at
 }
 
 // addStack はスタックを n 増やし、トラップ誘発・脱落を処理する。
@@ -31,9 +53,12 @@ func (s *Session) addStack(ps *playerState, n int) []Outbound {
 		return nil
 	}
 	ps.stack += n
-	if ps.stack >= s.params.Stack.Limit { // 脱落が最優先
-		out := []Outbound{s.dakenStackUpdated(ps, false)}
-		return append(out, s.eliminateWithKO(ps, ps.lastImpactor)...)
+	if ps.stack >= s.params.Stack.Limit { // 上限到達は脱落を保留（確定は resolveEliminations・#77）
+		if !ps.pendingKO {
+			ps.pendingKO = true
+			ps.pendingKiller = ps.lastImpactor // 着弾時点の下手人を記録
+		}
+		return []Outbound{s.dakenStackUpdated(ps, false)}
 	}
 
 	var out []Outbound
@@ -64,6 +89,7 @@ func (s *Session) eliminateWithKO(ps *playerState, killer *PlayerId) []Outbound 
 	ps.alive = false
 	s.aliveCount--
 	rank := s.aliveCount + 1 // 後に脱落するほど上位。最後の1人が1位
+	ps.rank = rank           // 確定順位を保持（試合中の順位配信で使う・#80）
 
 	var attackerId *PlayerId
 	transferred := 0
@@ -86,4 +112,46 @@ func (s *Session) eliminateWithKO(ps *playerState, killer *PlayerId) []Outbound 
 		}),
 		broadcastMsg(proto.PlayerListUpdated{Players: s.summaries(), AliveCount: s.aliveCount}),
 	}
+}
+
+// resolveEliminations は保留中(pendingKO)の脱落をまとめて確定する（#77）。
+// 同一tickで複数が上限到達した場合、弱い順に脱落させることで、最強者が最後に脱落＝最上位になる。
+// ＝全員が同時に倒れても「勝者なし」にはならず、強さ（キル数優先）で1位が決まる。
+func (s *Session) resolveEliminations() []Outbound {
+	var pend []*playerState
+	for _, pid := range s.order {
+		if ps := s.players[pid]; ps.alive && ps.pendingKO {
+			pend = append(pend, ps)
+		}
+	}
+	if len(pend) == 0 {
+		return nil
+	}
+	// 弱い順（先に脱落＝下位）に並べる。強さの比較は koCount→badges→combo→stack少→id。
+	sort.SliceStable(pend, func(i, j int) bool { return s.weaker(pend[i], pend[j]) })
+
+	var out []Outbound
+	for _, ps := range pend {
+		ps.pendingKO = false
+		out = append(out, s.eliminateWithKO(ps, ps.pendingKiller)...)
+	}
+	return out
+}
+
+// weaker は a が b より弱い（先に脱落させるべき）なら true。勝者確定のタイブレーク基準（#77）。
+// 強さ = キル数 > バッジ数 > コンボ > スタックの少なさ。完全同値は id で決定的に割る。
+func (s *Session) weaker(a, b *playerState) bool {
+	if a.koCount != b.koCount {
+		return a.koCount < b.koCount
+	}
+	if a.badges != b.badges {
+		return a.badges < b.badges
+	}
+	if ca, cb := a.p.Combo(), b.p.Combo(); ca != cb {
+		return ca < cb
+	}
+	if a.stack != b.stack {
+		return a.stack > b.stack // スタックが多いほうが弱い
+	}
+	return a.id > b.id
 }

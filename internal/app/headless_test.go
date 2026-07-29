@@ -31,7 +31,6 @@ func TestHeadlessMatch_PlaysToWinnerWithRanks(t *testing.T) {
 	s := game.NewSession("verify", params, app.DefaultStrategies(), odai.NewStaticPool(), rand.New(rand.NewSource(7)), inits)
 
 	pending := map[game.PlayerId][]proto.DakenId{}
-	clears := map[game.PlayerId]int{}
 	gameOverRank := map[int]game.PlayerId{}
 	kos := 0
 
@@ -50,10 +49,6 @@ func TestHeadlessMatch_PlaysToWinnerWithRanks(t *testing.T) {
 				t.Logf("[%s] ComboUpdated combo=%d delta=%+d (%s)", o.To.PlayerId, m.ComboValue, m.Delta, m.Reason)
 			case proto.AttackIncoming:
 				t.Logf("   ↳ [%s] AttackIncoming from=%s power=%d grace=%dms", o.To.PlayerId, m.AttackerId, m.Power, m.GraceMs)
-			case proto.AttackFailed:
-				t.Logf("[%s] AttackFailed (%s)", o.To.PlayerId, m.Reason)
-			case proto.OffsetResolved:
-				t.Logf("   ↳ [%s] OffsetResolved offset=%d remainderDaken=%d", o.To.PlayerId, m.OffsetAmount, m.RemainderDakenCount)
 			case proto.DakenStackUpdated:
 				t.Logf("[%s] DakenStackUpdated stack=%d/%d trapPending=%v", o.To.PlayerId, m.Count, m.Limit, m.TrapPending)
 			case proto.DifficultyUpdated:
@@ -77,7 +72,6 @@ func TestHeadlessMatch_PlaysToWinnerWithRanks(t *testing.T) {
 	t.Log("========== 試合開始 ==========")
 	consume(s.Start())
 
-	const attackEvery = 2
 	const tickMs = 1500 // grace(1000) を超えるので、そのラウンドの予告は Tick で着弾/expire する
 	rounds := 0
 	for ; rounds < 500 && s.State() != game.Finished; rounds++ {
@@ -88,11 +82,8 @@ func TestHeadlessMatch_PlaysToWinnerWithRanks(t *testing.T) {
 			}
 			did := q[0]
 			pending[id] = q[1:]
+			// クリア報告のみ。攻撃はサーバー側でクリア起点に自動発火する（#77）。
 			consume(s.ApplyDakenClear(id, proto.DakenClearReport{DakenId: did}))
-			clears[id]++
-			if clears[id]%attackEvery == 0 {
-				consume(s.ApplyAttack(id, proto.AttackRequest{}))
-			}
 		}
 		consume(s.Tick(tickMs))
 	}

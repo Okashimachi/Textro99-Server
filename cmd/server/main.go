@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"textro99/internal/app"
 	"textro99/internal/bot"
@@ -78,7 +79,8 @@ func main() {
 			}
 			id := nextID()
 			welcome(conn, id)
-			players := []matchmaking.Player{{Id: id, Conn: conn}}
+			name := awaitJoinName(conn, joinNameTimeout)
+			players := []matchmaking.Player{{Id: id, Conn: conn, Name: name}}
 			for i := 0; i < *bots; i++ {
 				players = append(players, app.NewBotPlayer(ctx, nextID(), bot.DefaultConfig()))
 			}
@@ -104,8 +106,9 @@ func main() {
 			}
 			id := nextID()
 			welcome(conn, id)
-			log.Printf("match: 参加 %s", id)
-			mm.Join(matchmaking.Player{Id: id, Conn: conn})
+			name := awaitJoinName(conn, joinNameTimeout)
+			log.Printf("match: 参加 %s name=%q", id, name)
+			mm.Join(matchmaking.Player{Id: id, Conn: conn, Name: name})
 		})
 	}
 
@@ -203,6 +206,29 @@ func listenAddr() string {
 		return ":" + p
 	}
 	return ":8080"
+}
+
+// joinNameTimeout は Welcome 後に MatchmakingJoin（表示名つき）を待つ上限。
+// 期限内に来なければ空名で続行し、試合構築側が接続IDへフォールバックする（#79）。
+const joinNameTimeout = 3 * time.Second
+
+// awaitJoinName は接続の最初の MatchmakingJoin を読み、サニタイズ済み表示名を返す。
+// タイムアウト・切断・別種メッセージ・不正JSON はいずれも空名を返す（フォールバック運用）。
+// ここで消費するのは参加メッセージ1通のみで、以降のゲーム内メッセージは room が読む。
+func awaitJoinName(conn transport.Connection, timeout time.Duration) string {
+	select {
+	case env, ok := <-conn.Receive():
+		if !ok || env.Type != proto.TypeMatchmakingJoin {
+			return ""
+		}
+		var m proto.MatchmakingJoin
+		if json.Unmarshal(env.Payload, &m) != nil {
+			return ""
+		}
+		return matchmaking.SanitizeDisplayName(m.DisplayName)
+	case <-time.After(timeout):
+		return ""
+	}
 }
 
 func welcome(conn transport.Connection, id game.PlayerId) {

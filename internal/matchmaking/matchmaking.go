@@ -9,7 +9,9 @@ package matchmaking
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
+	"unicode"
 
 	"textro99/internal/game"
 	"textro99/internal/proto"
@@ -17,9 +19,33 @@ import (
 )
 
 // Player は待機中／開始対象の1名。Conn はサーバー側の接続ハンドル。
+// Name は盤面表示名（サニタイズ済み・空ならフォールバックは試合構築側が決める）。
 type Player struct {
 	Id   game.PlayerId
 	Conn transport.Connection
+	Name string
+}
+
+// MaxDisplayNameLen は表示名の最大文字数（ルーン単位）。
+const MaxDisplayNameLen = 24
+
+// SanitizeDisplayName は受信した表示名を安全化する（#79）。
+// 前後空白を除去し、制御文字（改行・タブ等）を落とし、MaxDisplayNameLen ルーンで切り詰める。
+// 結果が空なら空文字を返す（フォールバック名の割り当ては呼び出し側の責務）。
+func SanitizeDisplayName(raw string) string {
+	cleaned := make([]rune, 0, len(raw))
+	for _, r := range raw {
+		if unicode.IsControl(r) {
+			continue
+		}
+		cleaned = append(cleaned, r)
+	}
+	name := strings.TrimSpace(string(cleaned))
+	rs := []rune(name)
+	if len(rs) > MaxDisplayNameLen {
+		name = strings.TrimSpace(string(rs[:MaxDisplayNameLen]))
+	}
+	return name
 }
 
 // Config は matchmaking の依存と数値。

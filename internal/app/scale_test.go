@@ -27,10 +27,10 @@ func TestScale_99Bots_RunsToCompletion(t *testing.T) {
 	}
 
 	params := game.DefaultParameters()
-	params.Stack.Limit = 6              // 早く脱落させる
+	params.Stack.Limit = 6 // 早く脱落させる
 	params.Attack.PowerToDakenRate = 0.5
-	params.Attack.WarningGraceMs = 120  // 予告がすぐ着弾
-	params.Session.TickIntervalMs = 15  // 高頻度tick
+	params.Attack.WarningGraceMs = 120 // 予告がすぐ着弾
+	params.Session.TickIntervalMs = 15 // 高頻度tick
 	params.Session.PublishIntervalMs = 60
 
 	const n = 99
@@ -39,7 +39,7 @@ func TestScale_99Bots_RunsToCompletion(t *testing.T) {
 
 	inits := make([]game.PlayerInit, 0, n)
 	conns := make(map[game.PlayerId]transport.Connection, n)
-	botCfg := bot.Config{ClearIntervalMs: 15, MissRate: 0.1, AttackEvery: 2}
+	botCfg := bot.Config{ClearIntervalMs: 15, MissRate: 0.1}
 	for i := 0; i < n; i++ {
 		id := game.PlayerId(fmt.Sprintf("bot%02d", i))
 		srv, cli := transport.Pipe()
@@ -64,8 +64,11 @@ func TestScale_99Bots_RunsToCompletion(t *testing.T) {
 	if sess.State() != game.Finished {
 		t.Fatalf("40秒で完走しなかった（収束せず or ブロック）: state=%v 生存=%d", sess.State(), aliveCount)
 	}
-	if aliveCount != 1 {
-		t.Fatalf("最終生存は1人のはず: got %d", aliveCount)
+	// クリア起点の自動攻撃(#77)では同一tickで複数着弾→複数同時脱落が起こり得るため、
+	// 攻めた検証パラメータでは 2→0 の全滅ドロー（勝者なし）も正常な収束。ここは「詰まらず
+	// 完走する」ことの確認なので生存0〜1を許容する（勝者確定のタイブレークは要検討・別課題）。
+	if aliveCount > 1 {
+		t.Fatalf("完走後の生存は1人以下のはず: got %d", aliveCount)
 	}
 	cancel() // Bot goroutine を止める
 }

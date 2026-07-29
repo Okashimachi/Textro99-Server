@@ -3,12 +3,14 @@ package game
 import (
 	"fmt"
 	"math/rand"
+	"sort"
 
 	"textro99/internal/proto"
 )
 
 // session.go は【層1コア】1試合の状態機械。純粋・Tick(dt)駆動（時計は持たず room が dt を渡す）。
-// 戦闘ロジックは attack.go(#21a) / offset.go(#21b) / stack.go(#21c) / difficulty.go(#21d) に分割。
+// 戦闘ロジックは attack.go(#21a 威力) / offset.go(#77 クリア攻撃・予告) / stack.go(#21c) /
+// difficulty.go(#21d) に分割。
 
 // SessionState は試合の状態。
 type SessionState int
@@ -36,14 +38,17 @@ func to(pid PlayerId, msg any) Outbound { return Outbound{To: Recipient{PlayerId
 func broadcastMsg(msg any) Outbound     { return Outbound{To: Recipient{Broadcast: true}, Msg: msg} }
 
 // issuedDaken はサーバーが発行済みのダケン（整合検証・打鍵数引き・時間切れ監視の元）。
+// ps.issued は発行順を保った slice（#81）。クライアントのお題キューと同じ並びを権威的に持ち、
+// 被弾ダケンの割り込み位置を算出できるようにする。
 type issuedDaken struct {
+	id          proto.DakenId
 	keystrokes  int
 	typ         proto.DakenType
 	timeLimitMs int
 	issuedAtMs  int64
 }
 
-// warning は予告(AttackWarning)。power は相殺(#21b)、issuedAt+grace は expire(#21b)に使う。
+// warning は予告(AttackWarning・#77)。power は着弾威力、issuedAt+grace で expire→着弾する。
 type warning struct {
 	id         proto.WarningId
 	attacker   PlayerId
@@ -53,30 +58,36 @@ type warning struct {
 	graceMs    int
 }
 
-// impactAtMs は着弾予定時刻（相殺の充当順＝着弾が近い順のため）。
+// impactAtMs は着弾予定時刻。
 func (w *warning) impactAtMs() int64 { return w.issuedAtMs + int64(w.graceMs) }
 
 // playerState は1人分の横断状態。per-player に属する状態はここに集約する。
 type playerState struct {
-	id       PlayerId
-	name     string
-	p        Player // コンボ（判定式は combo.go）
-	stack    int    // ダケンスタック（受領ダケン数。上限で脱落）
-	trapMilestone int // トラップ誘発のハイウォーターマーク（#21c）
-	badges   int
-	koCount  int
-	strategy int // 現在の作戦（既定4）
-	alive    bool
+	id            PlayerId
+	name          string
+	p             Player // コンボ（判定式は combo.go）
+	stack         int    // ダケンスタック（受領ダケン数。上限で脱落）
+	trapMilestone int    // トラップ誘発のハイウォーターマーク（#21c）
+	badges        int
+	koCount       int
+	strategy      int // 現在の作戦（既定4）
+	alive         bool
+	rank          int // 脱落時に確定した最終順位（#80。生存中は0＝summariesで動的算出）
 
 	// リザルト用タイプ統計（GameOver.TypingStats へ集計。#51）。
 	maxCombo          int // 到達した最大コンボ（終了時点ではなく高水位）
 	totalDakenCleared int // クリアしたダケン総数
 	totalMiss         int // 総ミス打鍵数（各報告の missCount の合計）
 
-	issued           map[proto.DakenId]*issuedDaken
-	pendingAgainstMe []proto.WarningId // 自分宛の予告（カウンター/相殺/巻き添え）
+	issued           []*issuedDaken    // 発行順のお題キュー（#81・クライアント表示順と一致）
+	pendingAgainstMe []proto.WarningId // 自分宛の予告（カウンター/巻き添え）
 	lastImpactor     *PlayerId         // 直近着弾者（リベンジ／KO帰属）
 	dakenSeq         int
+
+	// 脱落は即時確定せず保留する（#77 タイブレーク）。1tick内で複数が上限到達しても、
+	// resolveEliminations でまとめて「弱い順」に確定し、最強者を最後に脱落＝最上位にする。
+	pendingKO     bool
+	pendingKiller *PlayerId
 }
 
 // PlayerInit は NewSession に渡す初期プレイヤー情報。
@@ -115,7 +126,6 @@ func NewSession(id proto.MatchId, params GameParameters, strategies map[int]Targ
 	for _, in := range inits {
 		s.players[in.Id] = &playerState{
 			id: in.Id, name: in.DisplayName, strategy: 4, alive: true,
-			issued: make(map[proto.DakenId]*issuedDaken),
 		}
 		s.order = append(s.order, in.Id)
 	}
@@ -149,6 +159,30 @@ func (s *Session) Start() []Outbound {
 			InitialDaken: d,
 			Parameters:   s.publicParams(),
 		}))
+		// 先読みストック: 残り N-1 件を末尾に積んで NEXT を初手から満たす（#81）。
+		if rest := s.refillNormalStock(ps); len(rest) > 0 {
+			out = append(out, to(pid, proto.DakenIssued{Daken: rest}))
+		}
+	}
+	return out
+}
+
+// refillNormalStock は通常ダケンの先読み在庫を LookaheadCount まで補充し、新規発行分を返す（#81）。
+// クリア/時間切れで1件減るたびに1件補充して常時 N を保つ。返り値は末尾追加ぶんの DakenInstance。
+func (s *Session) refillNormalStock(ps *playerState) []proto.DakenInstance {
+	want := s.params.Odai.LookaheadCount
+	if want < 1 {
+		want = 1
+	}
+	have := 0
+	for _, d := range ps.issued {
+		if d.typ == proto.DakenNormal {
+			have++
+		}
+	}
+	var out []proto.DakenInstance
+	for ; have < want; have++ {
+		out = append(out, s.issueDaken(ps, proto.DakenNormal))
 	}
 	return out
 }
@@ -159,11 +193,11 @@ func (s *Session) ApplyDakenClear(from PlayerId, r proto.DakenClearReport) []Out
 	if ps == nil || !ps.alive || s.state != Running {
 		return nil
 	}
-	d, ok := ps.issued[r.DakenId]
-	if !ok {
+	d := ps.findIssued(r.DakenId)
+	if d == nil {
 		return nil // dakenId 整合検証: 発行中でない報告は無視（プロトコル仕様7章）
 	}
-	delete(ps.issued, r.DakenId)
+	ps.removeIssued(r.DakenId)
 
 	prevPersonal := s.personalLevel(ps)
 	outcome := ps.p.ApplyDakenClear(r.MissCount, d.keystrokes, s.params)
@@ -177,10 +211,17 @@ func (s *Session) ApplyDakenClear(from PlayerId, r proto.DakenClearReport) []Out
 
 	out := []Outbound{to(from, proto.ComboUpdated{ComboValue: outcome.Value, Delta: outcome.Delta, Reason: comboReasonToProto(outcome.Reason)})}
 
+	// 攻撃はダケンクリア起点（#77）。ノーミスクリアなら現在コンボを威力に、作戦の対象へ予告を出す。
+	// コンボは消費しないため、連続クリアで火力が伸びる。ミス時は combo=0 で発火しない。
+	if r.MissCount == 0 {
+		out = append(out, s.fireClearAttack(ps)...)
+	}
+
 	switch d.typ {
 	case proto.DakenNormal:
-		nd := s.issueDaken(ps, proto.DakenNormal)
-		out = append(out, to(from, proto.DakenIssued{Daken: []proto.DakenInstance{nd}}))
+		if rest := s.refillNormalStock(ps); len(rest) > 0 { // 先読み在庫を N に戻す（#81）
+			out = append(out, to(from, proto.DakenIssued{Daken: rest}))
+		}
 	case proto.DakenEnemySent:
 		if ps.stack > 0 {
 			ps.stack--
@@ -195,6 +236,7 @@ func (s *Session) ApplyDakenClear(from PlayerId, r proto.DakenClearReport) []Out
 	if ps.alive && s.personalLevel(ps) != prevPersonal { // 個人難易度が変わったら通知（#21d）
 		out = append(out, s.difficultyUpdatedFor(ps))
 	}
+	out = append(out, s.resolveEliminations()...) // トラップミスで上限到達した場合の確定（#77）
 	out = append(out, s.checkFinished()...)
 	return out
 }
@@ -220,7 +262,8 @@ func (s *Session) Tick(dtMs int) []Outbound {
 	var out []Outbound
 	out = append(out, s.advanceGlobalDifficulty()...) // #21d
 	out = append(out, s.expireTimeouts()...)          // #21d 時間切れ→積み残し
-	out = append(out, s.expireWarnings()...)          // #21b 予告grace超過→着弾
+	out = append(out, s.expireWarnings()...)          // #77 予告grace超過→着弾
+	out = append(out, s.resolveEliminations()...)     // #77 同時脱落をタイブレークで確定
 	out = append(out, s.checkFinished()...)
 	return out
 }
@@ -257,8 +300,15 @@ func (s *Session) typingStats(ps *playerState) proto.TypingStats {
 	}
 }
 
-// issueDaken は次のお題を発行し、台帳に記録して DakenInstance を返す。
+// issueDaken は次のお題を発行し、キュー末尾に積んで DakenInstance を返す（通常の発行経路）。
 func (s *Session) issueDaken(ps *playerState, typ proto.DakenType) proto.DakenInstance {
+	d, inst := s.newDaken(ps, typ)
+	ps.issued = append(ps.issued, d)
+	return inst
+}
+
+// newDaken はお題を1件生成する（キューへは積まない）。割り込み発行（被弾）で使うため分離した（#81）。
+func (s *Session) newDaken(ps *playerState, typ proto.DakenType) (*issuedDaken, proto.DakenInstance) {
 	lvl := s.effectiveLevel(ps)
 	var w Word
 	if typ == proto.DakenTrap {
@@ -267,13 +317,39 @@ func (s *Session) issueDaken(ps *playerState, typ proto.DakenType) proto.DakenIn
 		w = s.words.Next(lvl, s.rng)
 	}
 	ps.dakenSeq++
-	id := fmt.Sprintf("%s-%d", ps.id, ps.dakenSeq)
+	id := proto.DakenId(fmt.Sprintf("%s-%d", ps.id, ps.dakenSeq))
 	tl := s.timeLimitFor(lvl)
-	ps.issued[id] = &issuedDaken{keystrokes: w.KeystrokeCount, typ: typ, timeLimitMs: tl, issuedAtMs: s.elapsedMs}
-	return proto.DakenInstance{
+	d := &issuedDaken{id: id, keystrokes: w.KeystrokeCount, typ: typ, timeLimitMs: tl, issuedAtMs: s.elapsedMs}
+	return d, proto.DakenInstance{
 		DakenId: id, Type: typ, Text: w.Text, DifficultyLevel: lvl,
 		TimeLimitMs: tl, IssuedAtServerTimeMs: s.elapsedMs,
 	}
+}
+
+// findIssued はキューから id のお題を探す（発行中でなければ nil）。
+func (ps *playerState) findIssued(id proto.DakenId) *issuedDaken {
+	for _, d := range ps.issued {
+		if d.id == id {
+			return d
+		}
+	}
+	return nil
+}
+
+// removeIssued はキューから id のお題を除去する（順序保持）。除去できたら true。
+func (ps *playerState) removeIssued(id proto.DakenId) bool {
+	for i, d := range ps.issued {
+		if d.id == id {
+			ps.issued = append(ps.issued[:i], ps.issued[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// insertIssuedAt は ds をキューの位置 at へ挿入する（at はクランプ済み前提）。
+func (ps *playerState) insertIssuedAt(at int, ds []*issuedDaken) {
+	ps.issued = append(ps.issued[:at], append(append([]*issuedDaken{}, ds...), ps.issued[at:]...)...)
 }
 
 // timeLimitFor は難易度段階のダケン制限時間。
@@ -337,16 +413,41 @@ func (s *Session) incomingCount(pid PlayerId) int {
 }
 
 func (s *Session) summaries() []proto.PlayerSummary {
+	ranks := s.currentRanks()
 	out := make([]proto.PlayerSummary, 0, len(s.order))
 	for _, pid := range s.order {
 		p := s.players[pid]
 		out = append(out, proto.PlayerSummary{
 			PlayerId: p.id, DisplayName: p.name, ComboValue: p.p.Combo(),
 			DakenStackCount: p.stack, DakenStackLimit: s.params.Stack.Limit,
-			BadgeCount: p.badges, Alive: p.alive,
+			BadgeCount: p.badges, Alive: p.alive, Rank: ranks[pid],
 		})
 	}
 	return out
+}
+
+// currentRanks は試合中のサーバー確定順位を全員ぶん返す（#80）。
+// 生存者は強さ順（weaker の逆）に 1..aliveCount。脱落者は脱落時に確定した rank を使う
+// （脱落rank は常に aliveCount より大きいので生存者の順位と重複しない）。強さ基準は同時脱落の
+// タイブレーク [[resolveEliminations]] と同一（キル数>バッジ>コンボ>スタック少）＝盤面と結末が一貫する。
+func (s *Session) currentRanks() map[PlayerId]int {
+	live := make([]*playerState, 0, s.aliveCount)
+	for _, pid := range s.order {
+		if p := s.players[pid]; p.alive {
+			live = append(live, p)
+		}
+	}
+	sort.SliceStable(live, func(i, j int) bool { return s.weaker(live[j], live[i]) }) // 強い順
+	ranks := make(map[PlayerId]int, len(s.order))
+	for i, p := range live {
+		ranks[p.id] = i + 1
+	}
+	for _, pid := range s.order {
+		if p := s.players[pid]; !p.alive {
+			ranks[pid] = p.rank
+		}
+	}
+	return ranks
 }
 
 func (s *Session) publicParams() proto.GameParametersPublicSubset {

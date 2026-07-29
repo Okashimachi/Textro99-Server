@@ -41,7 +41,6 @@ const (
 // ── メッセージ種別タグ（Envelope.Type） ──────────────────────
 const (
 	TypeDakenClearReport = canon.TypeDakenClearReport
-	TypeAttackRequest    = canon.TypeAttackRequest
 	TypeStrategySelect   = canon.TypeStrategySelect
 	TypeMatchmakingJoin  = canon.TypeMatchmakingJoin
 	TypeMatchmakingLeave = canon.TypeMatchmakingLeave
@@ -53,8 +52,6 @@ const (
 	TypeComboUpdated      = canon.TypeComboUpdated
 	TypeDifficultyUpdated = canon.TypeDifficultyUpdated
 	TypeAttackIncoming    = canon.TypeAttackIncoming
-	TypeAttackFailed      = canon.TypeAttackFailed
-	TypeOffsetResolved    = canon.TypeOffsetResolved
 	TypeDakenStackUpdated = canon.TypeDakenStackUpdated
 	TypeKoNotified        = canon.TypeKoNotified
 	TypePlayerListUpdated = canon.TypePlayerListUpdated
@@ -66,7 +63,6 @@ const (
 // ── C2S ───────────────────────────────────────────────────
 type (
 	DakenClearReport = canon.DakenClearReport
-	AttackRequest    = canon.AttackRequest
 	StrategySelect   = canon.StrategySelect
 	MatchmakingJoin  = canon.MatchmakingJoin
 	MatchmakingLeave = canon.MatchmakingLeave
@@ -82,9 +78,6 @@ type (
 	ComboUpdated      = canon.ComboUpdated
 	DifficultyUpdated = canon.DifficultyUpdated
 	AttackIncoming    = canon.AttackIncoming
-	AttackFailReason  = canon.AttackFailReason
-	AttackFailed      = canon.AttackFailed
-	OffsetResolved    = canon.OffsetResolved
 	DakenStackUpdated = canon.DakenStackUpdated
 	KoNotified        = canon.KoNotified
 	PlayerListUpdated = canon.PlayerListUpdated
@@ -99,7 +92,4 @@ const (
 	ComboClear    = canon.ComboClear
 	ComboMiss     = canon.ComboMiss
 	ComboConsumed = canon.ComboConsumed
-
-	FailNoTarget = canon.FailNoTarget
-	FailNoCombo  = canon.FailNoCombo
 )

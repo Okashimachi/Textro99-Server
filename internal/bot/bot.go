@@ -21,11 +21,10 @@ import (
 type Config struct {
 	ClearIntervalMs int     // 1ダケンを打ち切るのにかける平均ms
 	MissRate        float64 // ミス確率(0..1)
-	AttackEvery     int     // 何回クリアごとに攻撃するか（<=0で攻撃しない）
 }
 
 // DefaultConfig は無難な既定値。
-func DefaultConfig() Config { return Config{ClearIntervalMs: 500, MissRate: 0.05, AttackEvery: 5} }
+func DefaultConfig() Config { return Config{ClearIntervalMs: 500, MissRate: 0.05} }
 
 // Bot は1接続を自動操作する。
 type Bot struct {
@@ -33,7 +32,6 @@ type Bot struct {
 	cfg     Config
 	rng     *rand.Rand
 	pending []proto.DakenId // 保持中（未クリア）の実在 dakenId
-	clears  int
 }
 
 // New は Bot を作る。conn は自分の（クライアント側）接続。
@@ -98,7 +96,7 @@ func (b *Bot) onMessage(env proto.Envelope) bool {
 	return false
 }
 
-// act は保持お題を1つクリア報告し、規定回数ごとに攻撃する。
+// act は保持お題を1つクリア報告する。攻撃はサーバー側でクリア起点に自動発火する（#77）。
 func (b *Bot) act() {
 	if len(b.pending) == 0 {
 		return
@@ -111,11 +109,6 @@ func (b *Bot) act() {
 		miss = 1
 	}
 	b.send(proto.TypeDakenClearReport, proto.DakenClearReport{DakenId: id, IsMiss: miss > 0, MissCount: miss})
-
-	b.clears++
-	if b.cfg.AttackEvery > 0 && b.clears%b.cfg.AttackEvery == 0 {
-		b.send(proto.TypeAttackRequest, proto.AttackRequest{})
-	}
 }
 
 func (b *Bot) send(typ string, msg any) {

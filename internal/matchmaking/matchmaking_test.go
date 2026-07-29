@@ -34,10 +34,14 @@ func TestMatchmaker_CountdownAndBotFill(t *testing.T) {
 	started := make(chan []Player, 1)
 	botN := 0
 	m := New(Config{
-		Params:  game.MatchingParams{MinPlayers: 2, MaxPlayers: 99, StartCountdownMs: 15000},
-		After:   func(time.Duration) <-chan time.Time { return afterCh },
-		Start:   func(p []Player) { started <- p },
-		NewBot:  func() Player { botN++; s, _ := transport.Pipe(); return Player{Id: game.PlayerId(fmt.Sprintf("bot%d", botN)), Conn: s} },
+		Params: game.MatchingParams{MinPlayers: 2, MaxPlayers: 99, StartCountdownMs: 15000},
+		After:  func(time.Duration) <-chan time.Time { return afterCh },
+		Start:  func(p []Player) { started <- p },
+		NewBot: func() Player {
+			botN++
+			s, _ := transport.Pipe()
+			return Player{Id: game.PlayerId(fmt.Sprintf("bot%d", botN)), Conn: s}
+		},
 		MinFill: 4, // 人間2 + Bot2 = 4
 	})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -111,7 +115,7 @@ func TestMatchmaker_LeaveBelowMinCancelsCountdown(t *testing.T) {
 	sb, _ := transport.Pipe()
 	m.Join(Player{Id: "a", Conn: sa})
 	m.Join(Player{Id: "b", Conn: sb}) // カウントダウン開始
-	m.Leave("b")                       // min割り込み→リセット
+	m.Leave("b")                      // min割り込み→リセット
 
 	// a は join-a / join-b / leave-b の3件の status を受け取る。3件目まで読めば
 	// Leave が処理済み＝countdown が nil にリセット済みと確定できる（決定的に同期）。
@@ -127,5 +131,30 @@ func TestMatchmaker_LeaveBelowMinCancelsCountdown(t *testing.T) {
 		t.Fatal("カウントダウンはリセットされ開始しないはず")
 	case <-time.After(300 * time.Millisecond):
 		// 開始しない＝正しい
+	}
+}
+
+// #79 表示名サニタイズ: trim / 制御文字除去 / ルーン単位切り詰め / 空。
+func TestSanitizeDisplayName(t *testing.T) {
+	long := ""
+	for i := 0; i < 40; i++ {
+		long += "あ"
+	}
+	cases := []struct{ in, want string }{
+		{"りーせ", "りーせ"},
+		{"  spaced  ", "spaced"},
+		{"a\tb\nc", "abc"},       // 制御文字は除去
+		{"\x00\x07evil", "evil"}, // NUL/ベル除去
+		{"", ""},                 // 空
+		{"   ", ""},              // 空白のみ→空
+		{long, string([]rune(long)[:MaxDisplayNameLen])}, // 24ルーンへ切り詰め
+	}
+	for _, c := range cases {
+		if got := SanitizeDisplayName(c.in); got != c.want {
+			t.Fatalf("SanitizeDisplayName(%q)=%q, want %q", c.in, got, c.want)
+		}
+	}
+	if n := len([]rune(SanitizeDisplayName(long))); n != MaxDisplayNameLen {
+		t.Fatalf("切り詰め後のルーン数=%d, want %d", n, MaxDisplayNameLen)
 	}
 }
