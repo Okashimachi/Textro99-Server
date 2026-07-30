@@ -54,6 +54,8 @@ func (l *RemoteLoader) Load(ctx context.Context) (game.GameParameters, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&gp); err != nil {
 		return def, fmt.Errorf("config: JSONデコード: %w", err)
 	}
+	// セクション追加前に保存された応答の後方互換（追加分はゼロ値→既定値で補う）。
+	gp = gp.BackfillLegacyDefaults()
 	if err := gp.Validate(); err != nil {
 		return def, fmt.Errorf("config: 値の検証: %w", err)
 	}
