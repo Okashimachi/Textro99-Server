@@ -19,6 +19,7 @@ type GameParameters struct {
 	Odai       OdaiParams       `json:"odai"`
 	Matching   MatchingParams   `json:"matching"`
 	Session    SessionParams    `json:"session"`
+	Bot        BotParams        `json:"bot"`
 }
 
 // ComboParams: コンボの蓄積・減衰・個人難易度連動。
@@ -76,6 +77,13 @@ type SessionParams struct {
 	PublishIntervalMs int `json:"publishIntervalMs"` // 99人ミニ盤面の配信間隔（tickより低頻度で帯域を抑える）
 }
 
+// BotParams: 人数補完・デモ用の CPU（Bot）の強さ。合成ルート(main)が bot.Config へ写して各Botに渡す。
+// 値は次の試合から反映（マッチ生成時に config を読み直すため）。game 本体は Bot を知らない。
+type BotParams struct {
+	ClearIntervalMs int     `json:"clearIntervalMs"` // 1お題を打ち切るのにかける間隔ms。上げるほど遅い＝弱い
+	MissRate        float64 `json:"missRate"`        // 1お題ごとのミス確率(0..1)。上げるほどミスが増える＝弱い
+}
+
 // Validate は破綻値を弾く最小限の検証。config 取得（RemoteLoader / DB / config-front POST）で
 // 共通に使う。コア game が GameParameters の不変条件を所有する（検証ロジックの単一ソース）。
 func (gp GameParameters) Validate() error {
@@ -84,6 +92,12 @@ func (gp GameParameters) Validate() error {
 	}
 	if gp.Difficulty.MaxLevel <= 0 {
 		return fmt.Errorf("difficulty.maxLevel は正である必要 (got %d)", gp.Difficulty.MaxLevel)
+	}
+	if gp.Bot.ClearIntervalMs <= 0 {
+		return fmt.Errorf("bot.clearIntervalMs は正である必要 (got %d)", gp.Bot.ClearIntervalMs)
+	}
+	if gp.Bot.MissRate < 0 || gp.Bot.MissRate > 1 {
+		return fmt.Errorf("bot.missRate は 0..1 である必要 (got %v)", gp.Bot.MissRate)
 	}
 	return nil
 }
@@ -132,6 +146,10 @@ func DefaultParameters() GameParameters {
 		Session: SessionParams{
 			TickIntervalMs:    150,
 			PublishIntervalMs: 250, // 約4Hz。KO等の即時イベントとは別に、盤面は低頻度スナップ
+		},
+		Bot: BotParams{
+			ClearIntervalMs: 500,  // 従来のハードコード値（bot.DefaultConfig 相当）
+			MissRate:        0.05, // 5%
 		},
 	}
 }

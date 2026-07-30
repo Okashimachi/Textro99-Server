@@ -62,6 +62,17 @@ func main() {
 		return d
 	}
 
+	// botConfig は Bot 生成のたびに最新 config の Bot 強さを読む（config-front の編集が次の試合の
+	// Bot から反映）。provider.Load は失敗時も有効なデフォルトを返す。game は Bot を知らないので
+	// 合成ルートのここで game.BotParams → bot.Config へ写す。
+	botConfig := func() bot.Config {
+		p, _ := provider.Load(ctx)
+		return bot.Config{
+			ClearIntervalMs: p.Bot.ClearIntervalMs,
+			MissRate:        p.Bot.MissRate,
+		}
+	}
+
 	var ids atomic.Int64
 	nextID := func() game.PlayerId { return game.PlayerId(idString(ids.Add(1))) }
 
@@ -82,7 +93,7 @@ func main() {
 			name := awaitJoinName(conn, joinNameTimeout)
 			players := []matchmaking.Player{{Id: id, Conn: conn, Name: name}}
 			for i := 0; i < *bots; i++ {
-				players = append(players, app.NewBotPlayer(ctx, nextID(), bot.DefaultConfig()))
+				players = append(players, app.NewBotPlayer(ctx, nextID(), botConfig()))
 			}
 			log.Printf("solo: 試合開始 human=%s bots=%d", id, *bots)
 			go app.RunMatch(ctx, loadDeps(), players)
@@ -95,7 +106,7 @@ func main() {
 				log.Printf("match: 試合開始 players=%d", len(players))
 				go app.RunMatch(ctx, loadDeps(), players)
 			},
-			NewBot:  func() matchmaking.Player { return app.NewBotPlayer(ctx, nextID(), bot.DefaultConfig()) },
+			NewBot:  func() matchmaking.Player { return app.NewBotPlayer(ctx, nextID(), botConfig()) },
 			MinFill: *bots,
 		})
 		go mm.Run(ctx)
