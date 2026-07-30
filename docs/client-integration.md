@@ -9,12 +9,27 @@
 
 ---
 
+## ⚠️ 2026-07-30 更新（#77/#79/#80/#81。以下が正典。矛盾する下記記述は本節優先）
+
+DemoStage(8/2) 向けの戦闘刷新で契約が変わった（proto `textro-main` v0.1.1）:
+
+- **#77 Enter攻撃・相殺・撃ち返しは廃止**。攻撃は**ダケンをノーミスクリアした瞬間サーバーが自動発火**する（クライアントは何も送らない）。コンボは消費されず伸び続け、**ミス／時間切れで0にリセット**。
+  → C2S から **`AttackRequest` 撤去**。S2C から **`OffsetResolved` / `AttackFailed` 撤去**。予告 `AttackIncoming`→grace→着弾は従来どおり。
+- **#79 表示名**: 接続後に **`MatchmakingJoin{ "displayName": "..." }`** を1通送る。未送信/空はサーバーが接続IDでフォールバック。
+- **#80 順位**: `PlayerSummary` に **`rank`**（試合中の確定順位。1=首位、0=未確定）を追加。クライアントは自前推定せずこれを表示。
+- **#81 先読み/割り込み**: `DakenIssued` に **`insertIndex`**（お題キューへの挿入位置。省略=末尾、被弾は途中に割り込む）を追加。開始時に複数の通常お題が届く（NEXT ストック）。
+
+以降の本文で `AttackRequest` / `OffsetResolved` / `AttackFailed` / 相殺・撃ち返し・Enter攻撃、および「`MatchmakingJoin` は未処理」と書いてある箇所は**すべて上記で置き換わっている**。
+
+---
+
 ## 0. 大原則（これだけは外さない）
 
-- **サーバーが戦闘の唯一の権威**。コンボ・威力・相殺・撃ち返し・被弾・KO・脱落・難易度は**全部サーバーが確定**する。
+- **サーバーが戦闘の唯一の権威**。コンボ・威力・被弾・KO・脱落・難易度・**順位**は**全部サーバーが確定**する。
 - **クライアントの責務は2つだけ**: ①打鍵のローカル判定（合ってる/ミス）②表示。
-- したがってクライアントが送るのは実質 **3種**（`DakenClearReport` / `AttackRequest` / `StrategySelect`）。
-  **時間切れ報告・脱落報告は送らない**（サーバーが自律検知して `DakenExpired` / `KoNotified` を配る）。
+- したがってクライアントが送るのは実質 **`DakenClearReport` / `StrategySelect` / `MatchmakingJoin`(表示名)** だけ。
+  攻撃はサーバーがクリア起点に自動発火するので **`AttackRequest` は送らない（廃止）**。
+  **時間切れ報告・脱落報告も送らない**（サーバーが自律検知して `DakenExpired` / `KoNotified` を配る）。
 - 全メッセージは **`{"type": "...", "payload": {...}}` の封筒**。JSON、フィールドは **camelCase**。WS フレームは **text**。
 
 ---
@@ -47,15 +62,15 @@
 | type | いつ送る | payload |
 |---|---|---|
 | `DakenClearReport` | 1ダケンの打鍵を**完了した瞬間**（ローカル判定） | `{ "dakenId": "...", "isMiss": false, "missCount": 0, "elapsedMs": 300 }` |
-| `AttackRequest` | **Enter 押下**時（保持コンボを全消費して攻撃） | `{ "consumedCombo": 0 }` |
 | `StrategySelect` | 作戦選択（0〜9キー / 試合前初期選択） | `{ "strategyId": 4 }` |
-| `MatchmakingJoin` / `MatchmakingLeave` | （予約）キュー参加/離脱 | `{}` |
+| `MatchmakingJoin` | 接続後に表示名を送る（#79） | `{ "displayName": "りーせ" }` |
+| `MatchmakingLeave` | （予約）キュー離脱 | `{}` |
 
 補足:
-- `DakenClearReport.missCount` が**正典**（`isMiss` は `missCount>0` の冗長フラグ）。ミスしても**そのダケンは完了扱い**で報告する（ミス回数を添えて送る）。
-- `AttackRequest.consumedCombo` は将来の部分消費UI用。**現状サーバーは無視して保持コンボを全消費**する（Enter=全消費）。0 でよい。
+- `DakenClearReport.missCount` が**正典**（`isMiss` は `missCount>0` の冗長フラグ）。ミスしても**そのダケンは完了扱い**で報告する（ミス回数を添えて送る）。**ミスするとコンボは0にリセット**され、そのクリアでは攻撃が出ない（#77）。
+- 🚫 **`AttackRequest` は廃止（#77）**。Enter 攻撃はもう無い。攻撃は**ノーミスクリアのたびサーバーが自動発火**する。クライアントは打鍵報告だけ送ればよい。
 - `StrategySelect.strategyId` は 0〜9。**未選択の既定は 4（ランダム）**。作戦IDの割り当ては §5。
-- ⚠️ **`MatchmakingJoin/Leave` は契約に存在するが、現サーバーは未処理**。今は **`/ws` 接続＝自動でキュー参加**。離脱はソケット切断で行う（切断ハンドリングは #36 で整備予定）。
+- `MatchmakingJoin.displayName`（#79）は接続後に1通送る。最大24ルーン・制御文字は除去・空/未送信は接続IDでフォールバック。Bot は `"BOT p-x"`。
 - ⚠️ dakenId は**サーバー発行の実在IDのみ**報告可（チート検証と衝突する。`MatchStart.initialDaken` と `DakenIssued` で受け取ったIDを使う）。
 
 ### 2.2 サーバー→クライアント（S2C）
@@ -68,9 +83,7 @@
 | `DakenExpired` | サーバーが時間切れ検知 | 本人 |
 | `ComboUpdated` | コンボ変化（加算/減衰/消費） | 本人 |
 | `DifficultyUpdated` | 難易度変化（全体/個人/実効） | 本人 |
-| `AttackIncoming` | 被弾予告（攻撃対象に確定） | 被弾者 |
-| `AttackFailed` | 攻撃が不成立（対象なし/コンボ0） | 攻撃者 |
-| `OffsetResolved` | 相殺の確定（＋撃ち返し） | 関係者 |
+| `AttackIncoming` | 被弾予告（クリア起点攻撃の対象に確定・#77） | 被弾者 |
 | `DakenStackUpdated` | スタック増減 | 本人 |
 | `KoNotified` | 脱落確定 | 全員 |
 | `PlayerListUpdated` | 全員ぶんのフルスナップ（低頻度） | 全員 |
@@ -86,11 +99,11 @@
 ```
 C → connect /ws
 S → Welcome            {"playerId":"p-1"}
-S → MatchStart         {... initialDaken ...}
+C → MatchmakingJoin    {"displayName":"りーせ"}   ← 接続後に表示名(#79)
+S → MatchStart         {... initialDaken ... 先読み複数(#81) ...}
    （ループ）
 S → DakenIssued / ComboUpdated / DakenStackUpdated / AttackIncoming / KoNotified / PlayerListUpdated ...
-C → DakenClearReport   （打鍵完了ごと）
-C → AttackRequest      （Enter）
+C → DakenClearReport   （打鍵完了ごと。ノーミスクリアでサーバーが自動攻撃・#77）
    （…）
 S → GameOver           {"rank":1, ...}
 ```
