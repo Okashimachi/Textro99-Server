@@ -30,12 +30,19 @@ import (
 
 // ── 共有ロガー（試合開始からの相対時刻つき・行の混線を防ぐ） ──────────────
 type logger struct {
-	mu    sync.Mutex
-	start time.Time
-	seen  map[string]int // 観測した type ごとの件数（末尾チェックリスト用）
+	mu       sync.Mutex
+	start    time.Time
+	seen     map[string]int // 観測した type ごとの件数（末尾チェックリスト用）
+	routeErr int            // 本人宛でないお題を受け取った回数（0であるべき＝ルーティング正当性）
 }
 
 func newLogger() *logger { return &logger{start: time.Now(), seen: map[string]int{}} }
+
+func (l *logger) routeViolation() {
+	l.mu.Lock()
+	l.routeErr++
+	l.mu.Unlock()
+}
 
 func (l *logger) log(who, format string, a ...any) {
 	l.mu.Lock()
@@ -51,7 +58,7 @@ func (l *logger) mark(typ string) {
 }
 
 func main() {
-	scenario := flag.String("scenario", "brawl", "brawl=3人殴り合い(攻撃/KO/優勝) / timeout=1人放置(時間切れ/トラップ/自滅・#78)")
+	scenario := flag.String("scenario", "brawl", "brawl=3人殴り合い / timeout=1人放置(時間切れ/トラップ) / selfko=被弾ゼロ自滅(KO実行者=nil)")
 	flag.Parse()
 	log := newLogger()
 
@@ -78,6 +85,20 @@ func main() {
 			{name: "リーセ", rateMs: 150, missRate: 0.0},
 			{name: "コウハイ", rateMs: 200, missRate: 0.1},
 			{name: "ネオチ", idle: true}, // 放置＝一切打鍵しない
+		}
+	case "selfko":
+		// 放置プレイヤーが被弾ゼロ・時間切れ積み残しのみで上限到達→自滅(KO実行者=nil)を観測。
+		// grace を極端に長くして、放置者が死ぬまで誰の攻撃も着弾させない。
+		params.Stack.Limit = 3
+		params.Stack.TrapTriggerInterval = 99 // トラップノイズを避ける
+		params.Odai.BaseTimeLimitMs = 500
+		params.Odai.MinTimeLimitMs = 500
+		params.Odai.PerLevelReductionMs = 0
+		params.Attack.WarningGraceMs = 8000 // 自滅前に着弾させない
+		specs = []clientSpec{
+			{name: "リーセ", rateMs: 150, missRate: 0.0},
+			{name: "コウハイ", rateMs: 180, missRate: 0.1},
+			{name: "ネオチ", idle: true}, // 被弾ゼロで時間切れだけで落ちる
 		}
 	default: // brawl
 		params.Stack.Limit = 8
@@ -277,12 +298,20 @@ func handle(log *logger, who string, env proto.Envelope, self *proto.PlayerId, s
 		types := make([]string, 0, len(m.Daken))
 		for _, d := range m.Daken {
 			types = append(types, string(d.Type))
+			if !ownedBy(d.DakenId, *self) { // 本人宛検証（#80/権威ルーティング）
+				log.routeViolation()
+				log.log(who, "⚠️ROUTING 他人のお題を受信: %s (self=%s)", d.DakenId, *self)
+			}
 			push(d)
 		}
 		log.log(who, "DakenIssued x%d %v (%s)", len(m.Daken), types, idx)
 	case proto.TypeDakenExpired:
 		var m proto.DakenExpired
 		_ = json.Unmarshal(env.Payload, &m)
+		if !ownedBy(m.DakenId, *self) {
+			log.routeViolation()
+			log.log(who, "⚠️ROUTING 他人の時間切れを受信: %s (self=%s)", m.DakenId, *self)
+		}
 		remove(m.DakenId)
 		log.log(who, "DakenExpired %s（時間切れ）", m.DakenId)
 	case proto.TypeComboUpdated:
@@ -333,6 +362,11 @@ func handle(log *logger, who string, env proto.Envelope, self *proto.PlayerId, s
 	return false
 }
 
+// ownedBy は dakenId が self のお題か（サーバーは "<playerId>-<seq>" で発行する）。
+func ownedBy(id proto.DakenId, self proto.PlayerId) bool {
+	return self != "" && strings.HasPrefix(string(id), string(self)+"-")
+}
+
 func aliveMark(alive bool) string {
 	if alive {
 		return "生"
@@ -372,4 +406,9 @@ func (l *logger) summary() {
 	} {
 		fmt.Printf("  ・ %-40s ×%d\n", opt.label, l.seen[opt.typ])
 	}
+	routeMark := "✅"
+	if l.routeErr > 0 {
+		routeMark = "❌"
+	}
+	fmt.Printf("  %s %-40s 違反=%d（お題は必ず本人宛か）\n", routeMark, "per-player ルーティング正当性", l.routeErr)
 }
