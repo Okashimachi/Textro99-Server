@@ -8,6 +8,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
@@ -50,6 +51,7 @@ func main() {
 	powerRate := flag.Float64("powerRate", -1, "attack.powerToDakenRate 上書き(-1でpreset値)")
 	stackLimit := flag.Int("stackLimit", -1, "stack.limit 上書き(-1でpreset値)")
 	grace := flag.Int("grace", -1, "attack.warningGraceMs 上書き(-1でpreset値)")
+	dumpJSON := flag.Bool("dumpjson", false, "解決した GameParameters を JSON で出して終了（config-front 投入用）")
 	flag.Parse()
 
 	params := buildParams(*preset)
@@ -64,6 +66,12 @@ func main() {
 	}
 	if *grace >= 0 {
 		params.Attack.WarningGraceMs = *grace
+	}
+
+	if *dumpJSON {
+		b, _ := json.MarshalIndent(params, "", "  ")
+		fmt.Println(string(b))
+		return
 	}
 
 	fmt.Printf("========== balancesim preset=%s players=%d matches=%d interval=%dms miss=%.2f ==========\n",
@@ -103,10 +111,13 @@ func main() {
 func buildParams(preset string) game.GameParameters {
 	p := game.DefaultParameters()
 	if preset == "tuned" {
-		// スノーボール抑制のたたき台（#29）:
-		p.Attack.MinComboToAttack = 30 // ある程度コンボを貯めないと攻撃が出ない
-		p.Attack.PowerToDakenRate = 0.06
+		// スノーボール抑制の推奨開始値（#29・balancesim で snowball~1.1 を確認した設定B）。
+		// 実機プレイテストの出発点。config-front から上書きして微調整する前提。
+		p.Attack.MinComboToAttack = 50   // ある程度コンボを貯めないと攻撃が出ない（毎クリア発火をやめる）
+		p.Attack.PowerToDakenRate = 0.02 // 1発の被害を大幅緩和
 		p.Attack.BadgePowerBonusCap = 0.5
+		p.Attack.WarningGraceMs = 2500 // 予告→着弾に間を持たせる
+		p.Stack.Limit = 60             // 上限を上げて即死を防ぐ
 	}
 	return p
 }
