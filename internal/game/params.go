@@ -102,6 +102,21 @@ func (gp GameParameters) Validate() error {
 	return nil
 }
 
+// BackfillLegacyDefaults は、GameParameters にセクションを追加した際の後方互換を扱う。
+// 保存済み設定（DB・リモートconfig）が追加前に作られた場合、そのセクションは JSON に無く
+// Unmarshal でゼロ値になり、Validate の新チェックに落ちて Load 全体が失敗しうる
+// （config 検証の単一ソースは game が持つため、後方互換の吸収もここに置く）。
+// セクション丸ごとゼロ値＝「未設定（旧データ）」とみなし、その時だけ既定値で補う。
+// Save は必ず Validate を通すため、部分的にでも有効な値が保存された構成が誤って
+// 上書きされることはない（丸ごとゼロ値になり得るのは本当に未設定の場合のみ）。
+func (gp GameParameters) BackfillLegacyDefaults() GameParameters {
+	def := DefaultParameters()
+	if gp.Bot == (BotParams{}) {
+		gp.Bot = def.Bot
+	}
+	return gp
+}
+
 // DefaultParameters はリモートコンフィグ取得失敗時のフォールバック内蔵デフォルト。
 // 値は 04_パラメータ仕様.md の初期仮値（すべて実測調整前のサンプル）。
 func DefaultParameters() GameParameters {

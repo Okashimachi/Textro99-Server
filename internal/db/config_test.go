@@ -80,4 +80,21 @@ func TestConfigStore_RoundTrip(t *testing.T) {
 	if got.Stack.Limit != 7 {
 		t.Fatalf("不正Saveで値が壊れた: got stack.limit=%d", got.Stack.Limit)
 	}
+
+	// 回帰: bot セクション追加前に保存された行（JSON に "bot" キーが無い）でも Load が
+	// 失敗しない（本番incident: config-front の GET /api/params が 500 になった原因）。
+	legacy := `{"stack":{"limit":7},"difficulty":{"maxLevel":12}}`
+	if _, err := pool.Exec(ctx, `UPDATE game_config SET params = $1 WHERE id = 1`, legacy); err != nil {
+		t.Fatalf("legacy行のセット: %v", err)
+	}
+	got, err = s.Load(ctx)
+	if err != nil {
+		t.Fatalf("bot キー無しの旧データで Load が失敗した（後方互換バグ）: %v", err)
+	}
+	if got.Bot != game.DefaultParameters().Bot {
+		t.Fatalf("bot が既定値で補完されていない: %+v", got.Bot)
+	}
+	if got.Stack.Limit != 7 {
+		t.Fatalf("旧データの既存値が保持されていない: got stack.limit=%d", got.Stack.Limit)
+	}
 }

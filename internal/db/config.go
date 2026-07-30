@@ -62,6 +62,8 @@ func (s *ConfigStore) Load(ctx context.Context) (game.GameParameters, error) {
 	if err := json.Unmarshal(data, &gp); err != nil {
 		return def, fmt.Errorf("db: config デコード: %w", err)
 	}
+	// セクション追加前に保存された行の後方互換（追加分はゼロ値→既定値で補う）。
+	gp = gp.BackfillLegacyDefaults()
 	if err := gp.Validate(); err != nil {
 		return def, fmt.Errorf("db: config 検証: %w", err)
 	}
