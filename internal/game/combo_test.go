@@ -21,38 +21,30 @@ func TestApplyDakenClear_NoMissGain(t *testing.T) {
 	}
 }
 
-// ミスありは加算せず missDecay×missCount だけ減衰する。
-func TestApplyDakenClear_MissDecay(t *testing.T) {
-	gp := DefaultParameters() // missDecay=3
+// ミスありは加算せずコンボを0にリセットする（#77・減衰ではなく即断）。
+func TestApplyDakenClear_MissResets(t *testing.T) {
+	gp := DefaultParameters()
 	p := Player{combo: 20}
 
-	got := p.ApplyDakenClear(2, 5, gp) // ミス2回 → -6、打鍵数は無視
-	if got.Delta != -6 || got.Value != 14 || got.Reason != ReasonMiss {
-		t.Fatalf("got %+v, want delta=-6 value=14 reason=Miss", got)
-	}
-}
-
-// 減衰はコンボを負にしない（0クランプ）。
-func TestApplyDakenClear_MissClampsAtZero(t *testing.T) {
-	gp := DefaultParameters()
-	p := Player{combo: 4}
-
-	got := p.ApplyDakenClear(5, 2, gp) // -15 だが 0 でクランプ
-	if got.Value != 0 || got.Delta != -4 || got.Reason != ReasonMiss {
-		t.Fatalf("got %+v, want value=0 delta=-4 reason=Miss", got)
-	}
-}
-
-// Enter=全消費。消費前コンボが Delta の絶対値として取れる。
-func TestConsumeAllCombo(t *testing.T) {
-	var p Player
-	p.ApplyDakenClear(0, 5, DefaultParameters()) // 15
-	got := p.ConsumeAllCombo()
-	if got.Value != 0 || got.Delta != -15 || got.Reason != ReasonConsumed {
-		t.Fatalf("got %+v, want value=0 delta=-15 reason=Consumed", got)
+	got := p.ApplyDakenClear(2, 5, gp) // ミス → 0、打鍵数は無視、Delta=-20
+	if got.Delta != -20 || got.Value != 0 || got.Reason != ReasonMiss {
+		t.Fatalf("got %+v, want delta=-20 value=0 reason=Miss", got)
 	}
 	if p.Combo() != 0 {
-		t.Fatalf("消費後コンボ=%d, want 0", p.Combo())
+		t.Fatalf("ミス後コンボ=%d, want 0", p.Combo())
+	}
+}
+
+// ResetCombo は時間切れ等の連続断ち。リセット前コンボが Delta の絶対値として取れる。
+func TestResetCombo(t *testing.T) {
+	var p Player
+	p.ApplyDakenClear(0, 5, DefaultParameters()) // 15
+	got := p.ResetCombo()
+	if got.Value != 0 || got.Delta != -15 || got.Reason != ReasonMiss {
+		t.Fatalf("got %+v, want value=0 delta=-15 reason=Miss", got)
+	}
+	if p.Combo() != 0 {
+		t.Fatalf("リセット後コンボ=%d, want 0", p.Combo())
 	}
 }
 

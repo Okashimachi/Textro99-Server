@@ -28,8 +28,8 @@ func (p *Player) Combo() int { return p.combo }
 // ApplyDakenClear は判定済みの DakenClearReport 相当（missCount）を受けてコンボを確定する。
 // keystrokeCount はそのダケンのローマ字打鍵数（サーバーがダケン発行時に算出した正準値・決定C）。
 //
-//   - missCount == 0（ノーミスクリア）: combo += base + perChar×keystrokeCount
-//   - missCount > 0（ミスあり）        : combo -= missDecay×missCount（0未満はクランプ）。加算はしない。
+//   - missCount == 0（ノーミスクリア）: combo += base + perChar×keystrokeCount（連続で伸びる）
+//   - missCount > 0（ミスあり）        : combo を 0 にリセット（#77・連続を断つ。減衰はやめた）
 //
 // 打鍵の正誤判定はクライアント責務。ここは判定済み結果からコンボを算出するだけ。
 func (p *Player) ApplyDakenClear(missCount, keystrokeCount int, gp GameParameters) ComboOutcome {
@@ -38,20 +38,15 @@ func (p *Player) ApplyDakenClear(missCount, keystrokeCount int, gp GameParameter
 		p.combo += gain
 		return ComboOutcome{Value: p.combo, Delta: gain, Reason: ReasonClear}
 	}
-
-	decay := gp.Combo.MissDecay * missCount
-	newValue := p.combo - decay
-	if newValue < 0 {
-		newValue = 0
-	}
-	delta := newValue - p.combo
-	p.combo = newValue
-	return ComboOutcome{Value: p.combo, Delta: delta, Reason: ReasonMiss}
+	return p.breakCombo() // ミスは連続を断つ（#77）
 }
 
-// ConsumeAllCombo は Enter=全消費のコンボ消費を確定し、消費前のコンボ量を Delta の絶対値で返す。
-func (p *Player) ConsumeAllCombo() ComboOutcome {
-	consumed := p.combo
+// ResetCombo は時間切れ等で連続を断ち切る（#77）。リセット前のコンボ量を Delta の絶対値で返す。
+func (p *Player) ResetCombo() ComboOutcome { return p.breakCombo() }
+
+// breakCombo はコンボを 0 にし、Reason=Miss の ComboOutcome を返す（ミス／時間切れ共通）。
+func (p *Player) breakCombo() ComboOutcome {
+	delta := -p.combo
 	p.combo = 0
-	return ComboOutcome{Value: 0, Delta: -consumed, Reason: ReasonConsumed}
+	return ComboOutcome{Value: 0, Delta: delta, Reason: ReasonMiss}
 }

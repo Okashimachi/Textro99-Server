@@ -32,7 +32,7 @@ func msEnv(dakenId string) proto.Envelope {
 // Bot はサーバー発行の実在 dakenId に対してクリア報告する（チート検証と整合）。
 func TestBot_ClearsRealDakenId(t *testing.T) {
 	srv, cli := transport.Pipe()
-	b := New(cli, Config{ClearIntervalMs: 1000, MissRate: 0, AttackEvery: 100}, rand.New(rand.NewSource(1)))
+	b := New(cli, Config{ClearIntervalMs: 1000, MissRate: 0}, rand.New(rand.NewSource(1)))
 
 	b.onMessage(msEnv("a-1")) // サーバーが a-1 を発行したと仮定
 	b.act()                   // 保持中の a-1 をクリア報告するはず
@@ -51,7 +51,7 @@ func TestBot_ClearsRealDakenId(t *testing.T) {
 // DakenIssued で受け取った複数お題も保持し、順にクリアする。
 func TestBot_ClearsIssuedDaken(t *testing.T) {
 	srv, cli := transport.Pipe()
-	b := New(cli, Config{ClearIntervalMs: 1000, MissRate: 0, AttackEvery: 100}, rand.New(rand.NewSource(1)))
+	b := New(cli, Config{ClearIntervalMs: 1000, MissRate: 0}, rand.New(rand.NewSource(1)))
 
 	p, _ := json.Marshal(proto.DakenIssued{Daken: []proto.DakenInstance{{DakenId: "x-1"}, {DakenId: "x-2"}}})
 	b.onMessage(proto.Envelope{Type: proto.TypeDakenIssued, Payload: p})
@@ -72,34 +72,6 @@ func recvClear(t *testing.T, c transport.Connection) proto.DakenClearReport {
 	var r proto.DakenClearReport
 	_ = json.Unmarshal(env.Payload, &r)
 	return r
-}
-
-// AttackEvery ごとに攻撃する。
-func TestBot_AttacksEveryN(t *testing.T) {
-	srv, cli := transport.Pipe()
-	b := New(cli, Config{ClearIntervalMs: 1000, MissRate: 0, AttackEvery: 2}, rand.New(rand.NewSource(1)))
-	for i := 0; i < 2; i++ {
-		b.onMessage(msEnv("d"))
-	}
-	// 追加でお題を積んでおく
-	for i := 0; i < 4; i++ {
-		b.onMessage(msEnv("d"))
-	}
-
-	sawAttack := false
-	// 2回クリアすると1回攻撃が挟まる。数件読んで AttackRequest を確認。
-	b.act() // clear #1
-	recv(t, srv)
-	b.act() // clear #2 → この後 attack
-	// clear #2 と attack の2通が来る
-	for i := 0; i < 2; i++ {
-		if recv(t, srv).Type == proto.TypeAttackRequest {
-			sawAttack = true
-		}
-	}
-	if !sawAttack {
-		t.Fatal("2回クリアごとに AttackRequest が来るべき")
-	}
 }
 
 // GameOver で onMessage が終了シグナルを返す。

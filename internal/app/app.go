@@ -72,7 +72,11 @@ func RunMatch(ctx context.Context, d Deps, players []matchmaking.Player) {
 	inits := make([]game.PlayerInit, 0, len(players))
 	conns := make(map[game.PlayerId]transport.Connection, len(players))
 	for _, p := range players {
-		inits = append(inits, game.PlayerInit{Id: p.Id, DisplayName: string(p.Id)})
+		name := p.Name
+		if name == "" { // 名前未指定はフォールバックで接続IDを使う（識別性を保つ・#79）
+			name = string(p.Id)
+		}
+		inits = append(inits, game.PlayerInit{Id: p.Id, DisplayName: name})
 		conns[p.Id] = p.Conn
 	}
 	sess := game.NewSession(nextMatchID(), d.Params, d.Strategies, d.Words, newRng(), inits)
@@ -87,5 +91,6 @@ func NewBotPlayer(ctx context.Context, id game.PlayerId, cfg bot.Config) matchma
 	srv, cli := transport.Pipe()
 	b := bot.New(cli, cfg, newRng())
 	go b.Run(ctx)
-	return matchmaking.Player{Id: id, Conn: srv}
+	// Bot は人間と区別できる表示名にする（#79）。id 例 "p-7" → "BOT p-7"。
+	return matchmaking.Player{Id: id, Conn: srv, Name: "BOT " + string(id)}
 }

@@ -30,14 +30,15 @@ type ComboParams struct {
 	PersonalDifficultyMaxLevel int `json:"personalDifficultyMaxLevel"`
 }
 
-// AttackParams: 威力・相殺・撃ち返し。
+// AttackParams: ダケンクリア攻撃の威力（#77）。
 type AttackParams struct {
 	ComboToPowerRatio       float64 `json:"comboToPowerRatio"`
 	PowerToDakenRate        float64 `json:"powerToDakenRate"`
 	BadgePowerBonusPerBadge float64 `json:"badgePowerBonusPerBadge"`
 	BadgePowerBonusCap      float64 `json:"badgePowerBonusCap"`
 	WarningGraceMs          int     `json:"warningGraceMs"`
-	MaxReboundChain         int     `json:"maxReboundChain"`
+	MinComboToAttack        int     `json:"minComboToAttack"` // このコンボ未満のクリアでは攻撃を出さない（#77）
+	MaxReboundChain         int     `json:"maxReboundChain"`  // 予約（現状の撃ち返し連鎖なしでは未使用）
 }
 
 // StackParams: ダケンスタックとトラップ誘発。
@@ -53,11 +54,13 @@ type DifficultyParams struct {
 	MaxLevel         int `json:"maxLevel"`
 }
 
-// OdaiParams: ダケン個別制限時間。
+// OdaiParams: ダケン個別制限時間と先読みストック（#81）。
 type OdaiParams struct {
 	BaseTimeLimitMs     int `json:"baseTimeLimitMs"`
 	PerLevelReductionMs int `json:"perLevelReductionMs"`
 	MinTimeLimitMs      int `json:"minTimeLimitMs"`
+	LookaheadCount      int `json:"lookaheadCount"`     // 常に先読みで保つ通常ダケン数（NEXTストック・#81）
+	DamageInsertOffset  int `json:"damageInsertOffset"` // 被弾ダケンをキューの何手先へ割り込ませるか（#81）
 }
 
 // MatchingParams: マッチング（試合前）。minPlayers は当日運用で下げられるよう可変性が重要。
@@ -102,6 +105,7 @@ func DefaultParameters() GameParameters {
 			BadgePowerBonusPerBadge: 0.1,
 			BadgePowerBonusCap:      1.0,
 			WarningGraceMs:          1500,
+			MinComboToAttack:        0, // 0=コンボがあれば毎クリア発火（#29で調整）
 			MaxReboundChain:         3,
 		},
 		Stack: StackParams{
@@ -117,6 +121,8 @@ func DefaultParameters() GameParameters {
 			BaseTimeLimitMs:     5000,
 			PerLevelReductionMs: 300,
 			MinTimeLimitMs:      2000,
+			LookaheadCount:      5, // NEXT ストックを常時5件（#81・初期仮値4〜6）
+			DamageInsertOffset:  3, // 被弾は3手先へ割り込み（現在＋次2件は不変）
 		},
 		Matching: MatchingParams{
 			MinPlayers:       20,

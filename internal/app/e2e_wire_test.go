@@ -57,7 +57,7 @@ func TestE2E_ClientWireFlow(t *testing.T) {
 		players := []matchmaking.Player{{Id: id, Conn: conn}}
 		for i := 0; i < 3; i++ {
 			players = append(players, app.NewBotPlayer(ctx, nextID(),
-				bot.Config{ClearIntervalMs: 40, MissRate: 0.02, AttackEvery: 2}))
+				bot.Config{ClearIntervalMs: 40, MissRate: 0.02}))
 		}
 		go app.RunMatch(ctx, deps, players)
 	})
@@ -75,7 +75,6 @@ func TestE2E_ClientWireFlow(t *testing.T) {
 	seen := map[string]json.RawMessage{} // 型ごとに最初の生payloadを1件保存
 	var self proto.PlayerId
 	pending := []proto.DakenId{}
-	clears := 0
 
 	pushDaken := func(d proto.DakenInstance) { pending = append(pending, d.DakenId) }
 	send := func(typ string, msg any) {
@@ -129,15 +128,11 @@ loop:
 			break loop
 		}
 
-		// 受信ごとに保持ダケンを1つクリア報告し、数回に1回攻撃。
+		// 受信ごとに保持ダケンを1つクリア報告する（攻撃はサーバー側でクリア起点に自動発火・#77）。
 		if len(pending) > 0 {
 			id := pending[0]
 			pending = pending[1:]
 			send(proto.TypeDakenClearReport, proto.DakenClearReport{DakenId: id, IsMiss: false, MissCount: 0, ElapsedMs: 300})
-			clears++
-			if clears%3 == 0 {
-				send(proto.TypeAttackRequest, proto.AttackRequest{})
-			}
 		}
 	}
 
