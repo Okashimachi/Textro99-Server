@@ -189,27 +189,85 @@ func TestDamageDaken_InsertsAtOffset(t *testing.T) {
 	}
 }
 
-// #78 被弾ダケンの時間切れ: 画面から除去（DakenExpired）するが stack は不変・次のお題も出さない。
+// #86 被弾ダケンの時間切れ: 先頭1件のみ expire し、stack を1減算する。
 func TestDifficulty_EnemySentExpires(t *testing.T) {
 	s := newTestSession(t, "a", "b")
 	s.Start()
 	a := s.players["a"]
 	clearIssued(a)
-	clearIssued(s.players["b"]) // b の初期通常お題を expire 対象から除外
+	clearIssued(s.players["b"])
 	a.stack = 3
 	for i := 0; i < 3; i++ {
-		s.issueDaken(a, proto.DakenEnemySent) // t=0, tl=base
+		s.issueDaken(a, proto.DakenEnemySent) // t=0, tl=base(5000)
 	}
-	res := s.Tick(6000) // base制限時間超過
 
-	if n := countExpired(res); n != 3 {
-		t.Fatalf("被弾3個が expire すべき: got %d", n)
+	// tick 1: 先頭だけ expire → stack 3→2, 残り2件の先頭は issuedAtMs=6000 にリセット
+	res := s.Tick(6000)
+	if n := countExpired(res); n != 1 {
+		t.Fatalf("先頭1件だけ expire すべき: got %d", n)
 	}
-	if a.stack != 3 {
-		t.Fatalf("被弾 expire で stack は不変(=3)であるべき: got %d", a.stack)
+	if a.stack != 2 {
+		t.Fatalf("被弾 expire で stack-1 すべき: got %d, want 2", a.stack)
+	}
+	if len(a.issued) != 2 {
+		t.Fatalf("残り2件あるべき: issued=%d", len(a.issued))
+	}
+
+	// tick 2: 新ヘッドの issuedAtMs=6000+5000=11000 まで進める → expire, stack 2→1
+	s.Tick(5150) // elapsedMs = 11150
+	if a.stack != 1 {
+		t.Fatalf("2件目 expire で stack=1 すべき: got %d", a.stack)
+	}
+
+	// tick 3: 最後の1件 expire → stack 1→0
+	s.Tick(5150) // elapsedMs = 16300, head.issuedAtMs=11150+5000=16150 < 16300
+	if a.stack != 0 {
+		t.Fatalf("3件目 expire で stack=0 すべき: got %d", a.stack)
 	}
 	if len(a.issued) != 0 {
-		t.Fatalf("被弾 expire は次のお題を出さない: issued=%d", len(a.issued))
+		t.Fatalf("全件 expire 後はキュー空: issued=%d", len(a.issued))
+	}
+}
+
+// #86 先読みダケンはヘッドより先に期限切れしない。
+func TestLookahead_DoesNotExpireBeforeHead(t *testing.T) {
+	s := newTestSession(t, "a", "b")
+	s.Start()
+	a := s.players["a"]
+	initialCount := len(a.issued) // 5件（LookaheadCount=5）
+	clearIssued(s.players["b"])   // b を対象外にする
+
+	// 全ダケンの issuedAtMs=0, timeLimitMs=5000。旧ロジックなら5件一斉 expire。
+	res := s.Tick(6000)
+	expired := countExpired(res)
+	if expired != 1 {
+		t.Fatalf("先頭1件だけ expire すべき: got %d (旧ロジックなら %d 件一斉 expire)", expired, initialCount)
+	}
+}
+
+// #86 ヘッド除去後に新ヘッドの issuedAtMs がリセットされる。
+func TestRefreshHead_ResetsIssuedAt(t *testing.T) {
+	s := newTestSession(t, "a", "b")
+	out := s.Start()
+	a := s.players["a"]
+	var da proto.DakenId
+	for _, o := range out {
+		if ms, ok := o.Msg.(proto.MatchStart); ok && o.To.PlayerId == "a" {
+			da = ms.InitialDaken.DakenId
+		}
+	}
+
+	// ヘッドをクリア → 新ヘッドの issuedAtMs が現在時刻(0)にリセットされる。
+	s.ApplyDakenClear("a", proto.DakenClearReport{DakenId: da})
+	if len(a.issued) > 0 && a.issued[0].issuedAtMs != 0 {
+		t.Fatalf("新ヘッドの issuedAtMs がリセットされるべき: got %d, want 0", a.issued[0].issuedAtMs)
+	}
+
+	clearIssued(s.players["b"]) // b を対象外にする
+	// 時間を進めてからヘッドを expire → 新ヘッドは進めた時刻にリセット。
+	s.Tick(6000)
+	if len(a.issued) > 0 && a.issued[0].issuedAtMs != 6000 {
+		t.Fatalf("expire 後の新ヘッド issuedAtMs=%d, want 6000", a.issued[0].issuedAtMs)
 	}
 }
 

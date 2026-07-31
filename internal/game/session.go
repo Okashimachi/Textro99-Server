@@ -197,7 +197,10 @@ func (s *Session) ApplyDakenClear(from PlayerId, r proto.DakenClearReport) []Out
 	if d == nil {
 		return nil // dakenId 整合検証: 発行中でない報告は無視（プロトコル仕様7章）
 	}
-	ps.removeIssued(r.DakenId)
+	pos := ps.removeIssued(r.DakenId)
+	if pos == 0 {
+		ps.refreshHead(s.elapsedMs)
+	}
 
 	prevPersonal := s.personalLevel(ps)
 	outcome := ps.p.ApplyDakenClear(r.MissCount, d.keystrokes, s.params)
@@ -336,15 +339,23 @@ func (ps *playerState) findIssued(id proto.DakenId) *issuedDaken {
 	return nil
 }
 
-// removeIssued はキューから id のお題を除去する（順序保持）。除去できたら true。
-func (ps *playerState) removeIssued(id proto.DakenId) bool {
+// removeIssued はキューから id のお題を除去する（順序保持）。除去した位置を返す（-1=不在）。
+func (ps *playerState) removeIssued(id proto.DakenId) int {
 	for i, d := range ps.issued {
 		if d.id == id {
 			ps.issued = append(ps.issued[:i], ps.issued[i+1:]...)
-			return true
+			return i
 		}
 	}
-	return false
+	return -1
+}
+
+// refreshHead は先頭ダケンの issuedAtMs を nowMs にリセットする（#86）。
+// 先読みキューから昇格した新ヘッドに完全な制限時間を与えるために使う。
+func (ps *playerState) refreshHead(nowMs int64) {
+	if len(ps.issued) > 0 && ps.issued[0].issuedAtMs < nowMs {
+		ps.issued[0].issuedAtMs = nowMs
+	}
 }
 
 // insertIssuedAt は ds をキューの位置 at へ挿入する（at はクランプ済み前提）。
