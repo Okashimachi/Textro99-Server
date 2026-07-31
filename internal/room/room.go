@@ -67,6 +67,8 @@ func New(session *game.Session, conns map[game.PlayerId]transport.Connection, ti
 // Run は試合を最後まで（Finished）駆動する。ctx キャンセルでも抜ける。
 func (r *Room) Run(ctx context.Context) {
 	defer close(r.done)
+	defer r.closeConns() // 試合終了(Finished/ctxキャンセル問わず)後、リザルト画面に居座られても
+	// サーバー側に接続を残さない（Room はここで役目を終える。以後このソケットへは何も送らない）。
 	for pid, c := range r.conns {
 		go r.readConn(pid, c)
 	}
@@ -99,6 +101,16 @@ func (r *Room) publish() {
 	}
 	players, aliveCount := r.session.Snapshot()
 	r.publisher.Publish(r.elapsedMs, players, aliveCount, r.conns)
+}
+
+// closeConns は Room 終了時に全接続を閉じる。試合終了(GameOver配信済み)後はこのソケットへ
+// 二度とメッセージを送らないため、クライアントがリザルト画面を開いたまま放置しても
+// サーバー側に無駄な接続を残さない（#84 と同種の"終わった状態が居座る"クラスの不具合の対策）。
+// Close のエラーは診断上有用でないため無視する（既に切れている等）。
+func (r *Room) closeConns() {
+	for _, c := range r.conns {
+		_ = c.Close()
+	}
 }
 
 // readConn は1接続を読み続け、受信を inbox へ流す。接続 close / Room 終了で抜ける。
