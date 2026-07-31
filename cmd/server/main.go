@@ -81,6 +81,13 @@ func main() {
 	// 未設定なら全許可（結合をブロックしない。/ws は Cookie 認証等を持たないため実害小）。
 	wsAccept := wsAcceptOptions(parseCSV(os.Getenv("ALLOWED_ORIGINS")))
 
+	botsExplicit := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "bots" {
+			botsExplicit = true
+		}
+	})
+
 	switch *mode {
 	case "solo":
 		http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -100,6 +107,13 @@ func main() {
 		})
 
 	default: // match
+		minFill := initial.Matching.MinFill
+		if botsExplicit {
+			minFill = *bots
+		}
+		if minFill == 0 {
+			minFill = game.DefaultParameters().Matching.MinFill
+		}
 		mm := matchmaking.New(matchmaking.Config{
 			Params: initial.Matching,
 			Start: func(players []matchmaking.Player) {
@@ -107,7 +121,7 @@ func main() {
 				go app.RunMatch(ctx, loadDeps(), players)
 			},
 			NewBot:  func() matchmaking.Player { return app.NewBotPlayer(ctx, nextID(), botConfig()) },
-			MinFill: *bots,
+			MinFill: minFill,
 		})
 		go mm.Run(ctx)
 		http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {

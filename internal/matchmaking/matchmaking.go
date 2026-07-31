@@ -101,6 +101,7 @@ func (m *Matchmaker) Leave(id game.PlayerId) { m.events <- event{kind: evLeave, 
 func (m *Matchmaker) Run(ctx context.Context) {
 	var pool []Player
 	var countdown <-chan time.Time // nil のときカウントダウンなし
+	var countdownStart time.Time   // カウントダウン開始時刻（残り時間算出用）
 	min := m.cfg.Params.MinPlayers
 	max := m.cfg.Params.MaxPlayers
 
@@ -119,15 +120,16 @@ func (m *Matchmaker) Run(ctx context.Context) {
 					continue
 				}
 				if countdown == nil && len(pool) >= min {
+					countdownStart = time.Now()
 					countdown = m.cfg.After(time.Duration(m.cfg.Params.StartCountdownMs) * time.Millisecond)
 				}
 			case evLeave:
 				pool = removePlayer(pool, ev.id)
 				if countdown != nil && len(pool) < min {
-					countdown = nil // minPlayers 割り込み→カウントダウンリセット
+					countdown = nil
 				}
 			}
-			m.broadcast(pool, countdown != nil)
+			m.broadcast(pool, countdown != nil, countdownStart)
 
 		case <-countdown:
 			m.startMatch(pool)
@@ -148,14 +150,26 @@ func (m *Matchmaker) startMatch(pool []Player) {
 }
 
 // broadcast は待機者へ現在の MatchmakingStatus を配信する。
-func (m *Matchmaker) broadcast(pool []Player, counting bool) {
+func (m *Matchmaker) broadcast(pool []Player, counting bool, countdownStart time.Time) {
+	players := make([]proto.WaitingPlayer, len(pool))
+	for i, p := range pool {
+		name := p.Name
+		if name == "" {
+			name = string(p.Id)
+		}
+		players[i] = proto.WaitingPlayer{DisplayName: name}
+	}
 	status := proto.MatchmakingStatus{
 		WaitingCount: len(pool),
 		MinPlayers:   m.cfg.Params.MinPlayers,
+		Players:      players,
 	}
-	if counting { // カウントダウン中は目安として全体秒数を載せる（クライアントが自前で減算表示）
-		cd := m.cfg.Params.StartCountdownMs
-		status.CountdownMs = &cd
+	if counting {
+		remaining := m.cfg.Params.StartCountdownMs - int(time.Since(countdownStart).Milliseconds())
+		if remaining < 0 {
+			remaining = 0
+		}
+		status.CountdownMs = &remaining
 	}
 	data, err := json.Marshal(status)
 	if err != nil {
