@@ -85,6 +85,7 @@ type (
 	PlayerListDelta   = canon.PlayerListDelta
 	TypingStats       = canon.TypingStats
 	GameOver          = canon.GameOver
+	WaitingPlayer     = canon.WaitingPlayer
 	MatchmakingStatus = canon.MatchmakingStatus
 )
 

@@ -69,6 +69,7 @@ type MatchingParams struct {
 	MinPlayers       int `json:"minPlayers"`
 	MaxPlayers       int `json:"maxPlayers"`
 	StartCountdownMs int `json:"startCountdownMs"`
+	MinFill          int `json:"minFill"`
 }
 
 // SessionParams: 試合ループの調整値。tick 周期・状態配信間隔もハードコードせずここで持つ（決定4）。
@@ -157,6 +158,7 @@ func DefaultParameters() GameParameters {
 			MinPlayers:       20,
 			MaxPlayers:       99,
 			StartCountdownMs: 15000,
+			MinFill:          99,
 		},
 		Session: SessionParams{
 			TickIntervalMs:    150,
