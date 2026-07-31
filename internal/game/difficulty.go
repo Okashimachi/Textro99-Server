@@ -60,47 +60,45 @@ func (s *Session) advanceGlobalDifficulty() []Outbound {
 	return out
 }
 
-// expireTimeouts は制限時間を超えたお題を種別問わず打ち切る（#78）。
-// 種別で後処理が違う:
-//   - 通常     : 積み残し(+1)＋先読み在庫を N に補充（#81）。
-//   - 被弾      : 画面から除去するだけ。着弾時に stack へ加算済みのため増減せず、次のお題も出さない
-//     （時間内にクリアできなかった＝負担が残る。要マネージャー再検討）。
-//   - トラップ  : 未処理トラップは失敗扱いとし TrapMissPenalty を加算（クリア時ミスと同待遇。要再検討）。
+// expireTimeouts はキュー先頭（プレイヤーが作業中のお題）だけを時間切れ判定する（#86）。
+// 先読みストック（キュー2番目以降）はまだ到達していないため期限切れにしない。
+// 先頭が除去されると新先頭の issuedAtMs を現在時刻にリセットし、完全な制限時間を与える。
 //
-// いずれも DakenExpired を送ってクライアント側の凍結（同じお題が消えず次へ進まない）を解消する。
+// 種別で後処理が違う:
+//   - 通常    : 積み残し(+1)＋先読み在庫を N に補充（#81）。
+//   - 被弾    : stack を1減算（着弾時に加算した分を戻す。#86）。
+//   - トラップ: 未処理トラップは失敗扱いとし TrapMissPenalty を加算。
 func (s *Session) expireTimeouts() []Outbound {
 	var out []Outbound
 	for _, pid := range s.order {
 		ps := s.players[pid]
-		if !ps.alive {
+		if !ps.alive || len(ps.issued) == 0 {
 			continue
 		}
-		// キュー順（＝発行順・決定的）に時間切れを集める。
-		var expired []*issuedDaken
-		for _, d := range ps.issued {
-			if s.elapsedMs >= d.issuedAtMs+int64(d.timeLimitMs) {
-				expired = append(expired, d)
-			}
+		d := ps.issued[0]
+		if s.elapsedMs < d.issuedAtMs+int64(d.timeLimitMs) {
+			continue
 		}
-		// 時間切れ（クリア未達）は連続を断つ（#77）。1tickで複数切れても1回だけリセット・通知する。
-		if len(expired) > 0 && ps.p.Combo() > 0 {
+		if ps.p.Combo() > 0 {
 			oc := ps.p.ResetCombo()
 			out = append(out, to(pid, proto.ComboUpdated{ComboValue: 0, Delta: oc.Delta, Reason: proto.ComboMiss}))
 		}
-		for _, d := range expired {
-			ps.removeIssued(d.id)
-			out = append(out, to(pid, proto.DakenExpired{DakenId: d.id}))
-			switch d.typ {
-			case proto.DakenNormal:
-				out = append(out, s.addStack(ps, 1)...)             // 積み残し（通常ダケン1個分）
-				if rest := s.refillNormalStock(ps); len(rest) > 0 { // 先読み在庫を N に戻す（#81）
-					out = append(out, to(pid, proto.DakenIssued{Daken: rest}))
-				}
-			case proto.DakenTrap:
-				out = append(out, s.addStack(ps, s.params.Stack.TrapMissPenalty)...)
-			case proto.DakenEnemySent:
-				// 除去のみ。stack は着弾時に加算済みのため触らない。
+		ps.removeIssued(d.id)
+		ps.refreshHead(s.elapsedMs)
+		out = append(out, to(pid, proto.DakenExpired{DakenId: d.id}))
+		switch d.typ {
+		case proto.DakenNormal:
+			out = append(out, s.addStack(ps, 1)...)
+			if rest := s.refillNormalStock(ps); len(rest) > 0 {
+				out = append(out, to(pid, proto.DakenIssued{Daken: rest}))
 			}
+		case proto.DakenTrap:
+			out = append(out, s.addStack(ps, s.params.Stack.TrapMissPenalty)...)
+		case proto.DakenEnemySent:
+			if ps.stack > 0 {
+				ps.stack--
+			}
+			out = append(out, s.dakenStackUpdated(ps, false))
 		}
 	}
 	return out
