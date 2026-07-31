@@ -129,7 +129,7 @@ func main() {
 		return game.PlayerId(fmt.Sprintf("p-%d", ids))
 	}
 	mm := matchmaking.New(matchmaking.Config{
-		Params: params.Matching,
+		GetParams: func() game.MatchingParams { return params.Matching },
 		Start: func(players []matchmaking.Player) {
 			log.log("SERVER", "▶ 試合開始 players=%d", len(players))
 			go app.RunMatch(ctx, deps, players)

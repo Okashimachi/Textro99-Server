@@ -41,8 +41,8 @@ func main() {
 
 	provider := chooseProvider(ctx, *configURL)
 
-	// マッチング用パラメータ（minPlayers/countdown 等）は起動時スナップショット。
-	// ※これらの動的リロード（当日 minPlayers 変更）は matchmaker 側の対応が要る別課題。
+	// マッチング用パラメータ（minPlayers/countdown 等）は以前は起動時スナップショットだったが、
+	// 現在は matchmaker 側で動的リロード（当日 minPlayers や countdown の変更）に対応している。
 	initial, err := provider.Load(ctx)
 	if err != nil {
 		log.Printf("config: 起動時取得失敗のためデフォルトで継続: %v", err)
@@ -115,7 +115,10 @@ func main() {
 			minFill = game.DefaultParameters().Matching.MinFill
 		}
 		mm := matchmaking.New(matchmaking.Config{
-			Params: initial.Matching,
+			GetParams: func() game.MatchingParams {
+				p, _ := provider.Load(ctx)
+				return p.Matching
+			},
 			Start: func(players []matchmaking.Player) {
 				log.Printf("match: 試合開始 players=%d", len(players))
 				go app.RunMatch(ctx, loadDeps(), players)
