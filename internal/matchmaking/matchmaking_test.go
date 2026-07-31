@@ -34,7 +34,7 @@ func TestMatchmaker_CountdownAndBotFill(t *testing.T) {
 	started := make(chan []Player, 1)
 	botN := 0
 	m := New(Config{
-		Params: game.MatchingParams{MinPlayers: 2, MaxPlayers: 99, StartCountdownMs: 15000},
+		GetParams: func() game.MatchingParams { return game.MatchingParams{MinPlayers: 2, MaxPlayers: 99, StartCountdownMs: 15000} },
 		After:  func(time.Duration) <-chan time.Time { return afterCh },
 		Start:  func(p []Player) { started <- p },
 		NewBot: func() Player {
@@ -76,7 +76,7 @@ func TestMatchmaker_CountdownAndBotFill(t *testing.T) {
 func TestMatchmaker_MaxPlayersImmediateStart(t *testing.T) {
 	started := make(chan []Player, 1)
 	m := New(Config{
-		Params: game.MatchingParams{MinPlayers: 2, MaxPlayers: 2, StartCountdownMs: 15000},
+		GetParams: func() game.MatchingParams { return game.MatchingParams{MinPlayers: 2, MaxPlayers: 2, StartCountdownMs: 15000} },
 		Start:  func(p []Player) { started <- p },
 	})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -103,7 +103,7 @@ func TestMatchmaker_LeaveBelowMinCancelsCountdown(t *testing.T) {
 	afterCh := make(chan time.Time, 1)
 	started := make(chan []Player, 1)
 	m := New(Config{
-		Params: game.MatchingParams{MinPlayers: 2, MaxPlayers: 99, StartCountdownMs: 15000},
+		GetParams: func() game.MatchingParams { return game.MatchingParams{MinPlayers: 2, MaxPlayers: 99, StartCountdownMs: 15000} },
 		After:  func(time.Duration) <-chan time.Time { return afterCh },
 		Start:  func(p []Player) { started <- p },
 	})

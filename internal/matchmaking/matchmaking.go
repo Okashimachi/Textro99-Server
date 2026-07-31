@@ -50,7 +50,8 @@ func SanitizeDisplayName(raw string) string {
 
 // Config は matchmaking の依存と数値。
 type Config struct {
-	Params game.MatchingParams
+	// GetParams は現在のマッチング用パラメータを返す（動的リロード対応）。
+	GetParams func() game.MatchingParams
 	// After は指定時間後に発火するチャネルを返す（本番=time.After、テスト=手動）。
 	After func(time.Duration) <-chan time.Time
 	// Start は集まったプレイヤー（人間＋Bot補完）で試合を開始する（session+room 構築）。
@@ -102,10 +103,12 @@ func (m *Matchmaker) Run(ctx context.Context) {
 	var pool []Player
 	var countdown <-chan time.Time // nil のときカウントダウンなし
 	var countdownStart time.Time   // カウントダウン開始時刻（残り時間算出用）
-	min := m.cfg.Params.MinPlayers
-	max := m.cfg.Params.MaxPlayers
 
 	for {
+		params := m.cfg.GetParams()
+		min := params.MinPlayers
+		max := params.MaxPlayers
+
 		select {
 		case <-ctx.Done():
 			return
@@ -121,7 +124,7 @@ func (m *Matchmaker) Run(ctx context.Context) {
 				}
 				if countdown == nil && len(pool) >= min {
 					countdownStart = time.Now()
-					countdown = m.cfg.After(time.Duration(m.cfg.Params.StartCountdownMs) * time.Millisecond)
+					countdown = m.cfg.After(time.Duration(params.StartCountdownMs) * time.Millisecond)
 				}
 			case evLeave:
 				pool = removePlayer(pool, ev.id)
@@ -129,7 +132,7 @@ func (m *Matchmaker) Run(ctx context.Context) {
 					countdown = nil
 				}
 			}
-			m.broadcast(pool, countdown != nil, countdownStart)
+			m.broadcast(pool, countdown != nil, countdownStart, params)
 
 		case <-countdown:
 			m.startMatch(pool)
@@ -150,7 +153,7 @@ func (m *Matchmaker) startMatch(pool []Player) {
 }
 
 // broadcast は待機者へ現在の MatchmakingStatus を配信する。
-func (m *Matchmaker) broadcast(pool []Player, counting bool, countdownStart time.Time) {
+func (m *Matchmaker) broadcast(pool []Player, counting bool, countdownStart time.Time, params game.MatchingParams) {
 	players := make([]proto.WaitingPlayer, len(pool))
 	for i, p := range pool {
 		name := p.Name
@@ -161,11 +164,11 @@ func (m *Matchmaker) broadcast(pool []Player, counting bool, countdownStart time
 	}
 	status := proto.MatchmakingStatus{
 		WaitingCount: len(pool),
-		MinPlayers:   m.cfg.Params.MinPlayers,
+		MinPlayers:   params.MinPlayers,
 		Players:      players,
 	}
 	if counting {
-		remaining := m.cfg.Params.StartCountdownMs - int(time.Since(countdownStart).Milliseconds())
+		remaining := params.StartCountdownMs - int(time.Since(countdownStart).Milliseconds())
 		if remaining < 0 {
 			remaining = 0
 		}
