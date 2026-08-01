@@ -114,6 +114,9 @@ func main() {
 				if botsExplicit {
 					m.MinFill = *bots
 				}
+				if m.MinFill == 0 {
+					m.MinFill = game.DefaultParameters().Matching.MinFill
+				}
 				return m
 			},
 			Start: func(players []matchmaking.Player) {
