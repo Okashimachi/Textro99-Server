@@ -58,8 +58,6 @@ type Config struct {
 	Start func(players []Player)
 	// NewBot は Bot 枠を1つ作って返す（nil なら補完しない）。合成ルートが Pipe＋bot起動して返す。
 	NewBot func() Player
-	// MinFill は開始時にこの人数まで Bot で埋める（0 で補完なし）。
-	MinFill int
 }
 
 type eventKind int
@@ -104,11 +102,36 @@ func (m *Matchmaker) Run(ctx context.Context) {
 	var countdown <-chan time.Time // nil のときカウントダウンなし
 	var countdownStart time.Time   // カウントダウン開始時刻（残り時間算出用）
 
-	for {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	update := func(forceBroadcast bool) {
 		params := m.cfg.GetParams()
 		min := params.MinPlayers
 		max := params.MaxPlayers
+		changed := false
 
+		if max > 0 && len(pool) >= max {
+			m.startMatch(pool, params)
+			pool, countdown = nil, nil
+			return
+		}
+
+		if countdown == nil && len(pool) >= min {
+			countdownStart = time.Now()
+			countdown = m.cfg.After(time.Duration(params.StartCountdownMs) * time.Millisecond)
+			changed = true
+		} else if countdown != nil && len(pool) < min {
+			countdown = nil
+			changed = true
+		}
+
+		if forceBroadcast || changed {
+			m.broadcast(pool, countdown != nil, countdownStart, params)
+		}
+	}
+
+	for {
 		select {
 		case <-ctx.Done():
 			return
@@ -117,34 +140,27 @@ func (m *Matchmaker) Run(ctx context.Context) {
 			switch ev.kind {
 			case evJoin:
 				pool = append(pool, ev.p)
-				if max > 0 && len(pool) >= max {
-					m.startMatch(pool)
-					pool, countdown = nil, nil
-					continue
-				}
-				if countdown == nil && len(pool) >= min {
-					countdownStart = time.Now()
-					countdown = m.cfg.After(time.Duration(params.StartCountdownMs) * time.Millisecond)
-				}
 			case evLeave:
 				pool = removePlayer(pool, ev.id)
-				if countdown != nil && len(pool) < min {
-					countdown = nil
-				}
 			}
-			m.broadcast(pool, countdown != nil, countdownStart, params)
+			update(true)
+			
+		case <-ticker.C:
+			if len(pool) > 0 {
+				update(true)
+			}
 
 		case <-countdown:
-			m.startMatch(pool)
+			m.startMatch(pool, m.cfg.GetParams())
 			pool, countdown = nil, nil
 		}
 	}
 }
 
 // startMatch は Bot 補完してから Start を呼ぶ。
-func (m *Matchmaker) startMatch(pool []Player) {
+func (m *Matchmaker) startMatch(pool []Player, params game.MatchingParams) {
 	players := append([]Player(nil), pool...)
-	for len(players) < m.cfg.MinFill && m.cfg.NewBot != nil {
+	for len(players) < params.MinFill && m.cfg.NewBot != nil {
 		players = append(players, m.cfg.NewBot())
 	}
 	if m.cfg.Start != nil {

@@ -34,15 +34,18 @@ func TestMatchmaker_CountdownAndBotFill(t *testing.T) {
 	started := make(chan []Player, 1)
 	botN := 0
 	m := New(Config{
-		GetParams: func() game.MatchingParams { return game.MatchingParams{MinPlayers: 2, MaxPlayers: 99, StartCountdownMs: 15000} },
-		After:  func(time.Duration) <-chan time.Time { return afterCh },
-		Start:  func(p []Player) { started <- p },
+		GetParams: func() game.MatchingParams {
+			return game.MatchingParams{MinPlayers: 2, MaxPlayers: 4, StartCountdownMs: 15000, MinFill: 4}
+		},
+		After: func(time.Duration) <-chan time.Time { return afterCh },
+		Start: func(players []Player) {
+			started <- players
+		},
 		NewBot: func() Player {
 			botN++
 			s, _ := transport.Pipe()
 			return Player{Id: game.PlayerId(fmt.Sprintf("bot%d", botN)), Conn: s}
 		},
-		MinFill: 4, // 人間2 + Bot2 = 4
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
