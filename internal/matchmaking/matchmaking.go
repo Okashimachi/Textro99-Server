@@ -101,6 +101,8 @@ func (m *Matchmaker) Run(ctx context.Context) {
 	var pool []Player
 	var countdown <-chan time.Time // nil のときカウントダウンなし
 	var countdownStart time.Time   // カウントダウン開始時刻（残り時間算出用）
+	var countdownMin int
+	var countdownDurationMs int
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -118,12 +120,19 @@ func (m *Matchmaker) Run(ctx context.Context) {
 		}
 
 		if countdown == nil && len(pool) >= min {
+			countdownMin = min
+			countdownDurationMs = params.StartCountdownMs
 			countdownStart = time.Now()
 			countdown = m.cfg.After(time.Duration(params.StartCountdownMs) * time.Millisecond)
 			changed = true
-		} else if countdown != nil && len(pool) < min {
+		} else if countdown != nil && len(pool) < countdownMin {
 			countdown = nil
 			changed = true
+		}
+
+		if countdown != nil {
+			params.MinPlayers = countdownMin
+			params.StartCountdownMs = countdownDurationMs
 		}
 
 		if forceBroadcast || changed {
