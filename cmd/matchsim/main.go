@@ -134,7 +134,6 @@ func main() {
 			log.log("SERVER", "▶ 試合開始 players=%d", len(players))
 			go app.RunMatch(ctx, deps, players)
 		},
-		MinFill: 0, // Bot 補完なし（人間3人で開始）
 	})
 	go mm.Run(ctx)
 

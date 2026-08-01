@@ -43,7 +43,7 @@ func main() {
 
 	// マッチング用パラメータ（minPlayers/countdown 等）は以前は起動時スナップショットだったが、
 	// 現在は matchmaker 側で動的リロード（当日 minPlayers や countdown の変更）に対応している。
-	initial, err := provider.Load(ctx)
+	_, err := provider.Load(ctx)
 	if err != nil {
 		log.Printf("config: 起動時取得失敗のためデフォルトで継続: %v", err)
 	}
