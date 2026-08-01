@@ -107,24 +107,20 @@ func main() {
 		})
 
 	default: // match
-		minFill := initial.Matching.MinFill
-		if botsExplicit {
-			minFill = *bots
-		}
-		if minFill == 0 {
-			minFill = game.DefaultParameters().Matching.MinFill
-		}
 		mm := matchmaking.New(matchmaking.Config{
 			GetParams: func() game.MatchingParams {
 				p, _ := provider.Load(ctx)
-				return p.Matching
+				m := p.Matching
+				if botsExplicit {
+					m.MinFill = *bots
+				}
+				return m
 			},
 			Start: func(players []matchmaking.Player) {
 				log.Printf("match: 試合開始 players=%d", len(players))
 				go app.RunMatch(ctx, loadDeps(), players)
 			},
 			NewBot:  func() matchmaking.Player { return app.NewBotPlayer(ctx, nextID(), botConfig()) },
-			MinFill: minFill,
 		})
 		go mm.Run(ctx)
 		http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
