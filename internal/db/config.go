@@ -16,7 +16,8 @@ import (
 // 併せて config-front からの保存(Save, #50) にも使う。設定は小さな単一オブジェクトなので
 // 正規化せず JSONB 1行で持つ（GameParameters をそのまま marshal/unmarshal でき、検証も struct 単位）。
 type ConfigStore struct {
-	pool *pgxpool.Pool
+	pool     *pgxpool.Pool
+	lastGood game.GameParameters
 }
 
 // NewConfigStore は ConfigStore を作る。
@@ -56,17 +57,27 @@ func (s *ConfigStore) Load(ctx context.Context) (game.GameParameters, error) {
 		return def, fmt.Errorf("db: config 行が無い（Migrate未実行?）")
 	}
 	if err != nil {
+		if s.lastGood.Session.TickIntervalMs != 0 {
+			return s.lastGood, fmt.Errorf("db: config 取得エラー、前回成功値(キャッシュ)を返します: %w", err)
+		}
 		return def, fmt.Errorf("db: config 取得: %w", err)
 	}
 	var gp game.GameParameters
 	if err := json.Unmarshal(data, &gp); err != nil {
+		if s.lastGood.Session.TickIntervalMs != 0 {
+			return s.lastGood, fmt.Errorf("db: config デコードエラー、前回成功値(キャッシュ)を返します: %w", err)
+		}
 		return def, fmt.Errorf("db: config デコード: %w", err)
 	}
 	// セクション追加前に保存された行の後方互換（追加分はゼロ値→既定値で補う）。
 	gp = gp.BackfillLegacyDefaults()
 	if err := gp.Validate(); err != nil {
+		if s.lastGood.Session.TickIntervalMs != 0 {
+			return s.lastGood, fmt.Errorf("db: config 検証エラー、前回成功値(キャッシュ)を返します: %w", err)
+		}
 		return def, fmt.Errorf("db: config 検証: %w", err)
 	}
+	s.lastGood = gp
 	return gp, nil
 }
 
