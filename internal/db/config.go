@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,6 +18,7 @@ import (
 // 正規化せず JSONB 1行で持つ（GameParameters をそのまま marshal/unmarshal でき、検証も struct 単位）。
 type ConfigStore struct {
 	pool     *pgxpool.Pool
+	mu       sync.RWMutex
 	lastGood game.GameParameters
 }
 
@@ -57,27 +59,41 @@ func (s *ConfigStore) Load(ctx context.Context) (game.GameParameters, error) {
 		return def, fmt.Errorf("db: config 行が無い（Migrate未実行?）")
 	}
 	if err != nil {
+		s.mu.RLock()
 		if s.lastGood.Session.TickIntervalMs != 0 {
-			return s.lastGood, fmt.Errorf("db: config 取得エラー、前回成功値(キャッシュ)を返します: %w", err)
+			lg := s.lastGood
+			s.mu.RUnlock()
+			return lg, fmt.Errorf("db: config 取得エラー、前回成功値(キャッシュ)を返します: %w", err)
 		}
+		s.mu.RUnlock()
 		return def, fmt.Errorf("db: config 取得: %w", err)
 	}
 	var gp game.GameParameters
 	if err := json.Unmarshal(data, &gp); err != nil {
+		s.mu.RLock()
 		if s.lastGood.Session.TickIntervalMs != 0 {
-			return s.lastGood, fmt.Errorf("db: config デコードエラー、前回成功値(キャッシュ)を返します: %w", err)
+			lg := s.lastGood
+			s.mu.RUnlock()
+			return lg, fmt.Errorf("db: config デコードエラー、前回成功値(キャッシュ)を返します: %w", err)
 		}
+		s.mu.RUnlock()
 		return def, fmt.Errorf("db: config デコード: %w", err)
 	}
 	// セクション追加前に保存された行の後方互換（追加分はゼロ値→既定値で補う）。
 	gp = gp.BackfillLegacyDefaults()
 	if err := gp.Validate(); err != nil {
+		s.mu.RLock()
 		if s.lastGood.Session.TickIntervalMs != 0 {
-			return s.lastGood, fmt.Errorf("db: config 検証エラー、前回成功値(キャッシュ)を返します: %w", err)
+			lg := s.lastGood
+			s.mu.RUnlock()
+			return lg, fmt.Errorf("db: config 検証エラー、前回成功値(キャッシュ)を返します: %w", err)
 		}
+		s.mu.RUnlock()
 		return def, fmt.Errorf("db: config 検証: %w", err)
 	}
+	s.mu.Lock()
 	s.lastGood = gp
+	s.mu.Unlock()
 	return gp, nil
 }
 
