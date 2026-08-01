@@ -23,12 +23,14 @@ type Ticker interface {
 
 type Clock interface {
 	NewTicker(d time.Duration) Ticker
+	After(d time.Duration) <-chan time.Time
 }
 
 // RealClock は time.Ticker を使う本番用 Clock。
 type RealClock struct{}
 
 func (RealClock) NewTicker(d time.Duration) Ticker { return realTicker{time.NewTicker(d)} }
+func (RealClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
 type realTicker struct{ t *time.Ticker }
 
@@ -91,6 +93,14 @@ func (r *Room) Run(ctx context.Context) {
 			r.dispatch(r.session.Tick(r.tickMs))
 			r.publish()
 		}
+	}
+
+	// 試合終了後、フロントエンドのリザルト画面（カウントダウン15秒）が完了し
+	// 自発的に切断するまでの猶予期間（20秒）を設ける。
+	// これにより、即時切断によるフロントエンドの意図しない再接続（自動マッチング）を防ぐ。
+	select {
+	case <-ctx.Done():
+	case <-r.clock.After(20 * time.Second):
 	}
 }
 
@@ -198,6 +208,8 @@ func envelopeOf(msg any) (proto.Envelope, bool) {
 		typ = proto.TypeGameOver
 	case proto.MatchmakingStatus:
 		typ = proto.TypeMatchmakingStatus
+	case proto.MatchEnd:
+		typ = proto.TypeMatchEnd
 	default:
 		return proto.Envelope{}, false
 	}

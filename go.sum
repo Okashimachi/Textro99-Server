@@ -1,9 +1,5 @@
-github.com/Okashimachi/Textro99-Proto v0.1.0 h1:u9Jt6UGiiCSEablxRJVIYaItimd0mhKEUlScRlzfJ3s=
-github.com/Okashimachi/Textro99-Proto v0.1.0/go.mod h1:+G+vy+f0mV4EkDjtxpKKkhE71El9FbCtT2iJiaXoJJs=
-github.com/Okashimachi/Textro99-Proto v0.1.1 h1:wofiQIRFmxS913N1LM95YySWk7XpSNDv9oKxRRwq2Lc=
-github.com/Okashimachi/Textro99-Proto v0.1.1/go.mod h1:+G+vy+f0mV4EkDjtxpKKkhE71El9FbCtT2iJiaXoJJs=
-github.com/Okashimachi/Textro99-Proto v0.1.2-0.20260731153747-42fb05e2925e h1:FvRR8l4F2wxjEOzSPRzatyPpZN63MDe+aXmsmShV5Wk=
-github.com/Okashimachi/Textro99-Proto v0.1.2-0.20260731153747-42fb05e2925e/go.mod h1:+G+vy+f0mV4EkDjtxpKKkhE71El9FbCtT2iJiaXoJJs=
+github.com/Okashimachi/Textro99-Proto v0.1.2-0.20260731181256-775bf04fb9cf h1:nX+UXSvMhN54aMWXBmBNCYwjS0lkBwgZRvYSeJ567wE=
+github.com/Okashimachi/Textro99-Proto v0.1.2-0.20260731181256-775bf04fb9cf/go.mod h1:+G+vy+f0mV4EkDjtxpKKkhE71El9FbCtT2iJiaXoJJs=
 github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNUA=
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

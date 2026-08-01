@@ -33,6 +33,11 @@ func (stubStrategy) SelectTargets(c game.TargetingContext) []game.PlayerId {
 type nopClock struct{}
 
 func (nopClock) NewTicker(time.Duration) Ticker { return nopTicker{} }
+func (nopClock) After(time.Duration) <-chan time.Time {
+	ch := make(chan time.Time)
+	close(ch)
+	return ch
+}
 
 type nopTicker struct{}
 
@@ -48,6 +53,11 @@ func (m manualTicker) Stop()               {}
 type manualClock struct{ ticker manualTicker }
 
 func (m manualClock) NewTicker(time.Duration) Ticker { return m.ticker }
+func (m manualClock) After(time.Duration) <-chan time.Time {
+	ch := make(chan time.Time)
+	close(ch)
+	return ch
+}
 
 func recvEnv(t *testing.T, c transport.Connection) proto.Envelope {
 	t.Helper()

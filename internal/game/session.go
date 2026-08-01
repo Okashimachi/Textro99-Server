@@ -278,15 +278,22 @@ func (s *Session) checkFinished() []Outbound {
 	}
 	s.state = Finished
 	var out []Outbound
+	var winnerId PlayerId
 	for _, pid := range s.order {
 		ps := s.players[pid]
 		if ps.alive {
+			winnerId = pid
 			out = append(out, to(pid, proto.GameOver{
 				Rank: 1, KoCount: ps.koCount, FinalBadgeCount: ps.badges,
 				TypingStats: s.typingStats(ps),
 			}))
 		}
 	}
+	out = append(out, broadcastMsg(proto.MatchEnd{
+		MatchId:      s.id,
+		WinnerId:     winnerId,
+		FinalRanking: s.summaries(),
+	}))
 	return out
 }
 
