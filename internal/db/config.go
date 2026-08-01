@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,7 +21,10 @@ type ConfigStore struct {
 	pool     *pgxpool.Pool
 	mu       sync.RWMutex
 	lastGood game.GameParameters
+	cachedAt time.Time
 }
+
+const cacheTTL = 2 * time.Second
 
 // NewConfigStore は ConfigStore を作る。
 func NewConfigStore(pool *pgxpool.Pool) *ConfigStore { return &ConfigStore{pool: pool} }
@@ -52,6 +56,14 @@ func (s *ConfigStore) Migrate(ctx context.Context) error {
 // Load は現在の GameParameters を返す。取得・デコード・検証のいずれかに失敗しても
 // 内蔵デフォルト＋理由err を返す（＝第1返り値は常に有効。決定E / 04仕様7章）。
 func (s *ConfigStore) Load(ctx context.Context) (game.GameParameters, error) {
+	s.mu.RLock()
+	if !s.cachedAt.IsZero() && time.Since(s.cachedAt) < cacheTTL {
+		cached := s.lastGood
+		s.mu.RUnlock()
+		return cached, nil
+	}
+	s.mu.RUnlock()
+
 	def := game.DefaultParameters()
 	var data []byte
 	err := s.pool.QueryRow(ctx, `SELECT params FROM game_config WHERE id = 1`).Scan(&data)
@@ -93,6 +105,7 @@ func (s *ConfigStore) Load(ctx context.Context) (game.GameParameters, error) {
 	}
 	s.mu.Lock()
 	s.lastGood = gp
+	s.cachedAt = time.Now()
 	s.mu.Unlock()
 	return gp, nil
 }
@@ -111,6 +124,12 @@ func (s *ConfigStore) Save(ctx context.Context, gp game.GameParameters) error {
 	if _, err := s.pool.Exec(ctx, up, data); err != nil {
 		return fmt.Errorf("db: save: %w", err)
 	}
+
+	s.mu.Lock()
+	s.lastGood = gp
+	s.cachedAt = time.Now()
+	s.mu.Unlock()
+
 	return nil
 }
 
