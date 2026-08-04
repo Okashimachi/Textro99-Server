@@ -2,7 +2,7 @@ module textro99
 
 go 1.25.0
 
-require github.com/Okashimachi/Textro99-Proto v0.1.2-0.20260731153747-42fb05e2925e
+require github.com/Okashimachi/Textro99-Proto v0.1.2-0.20260731181256-775bf04fb9cf
 
 require (
 	github.com/coder/websocket v1.8.15

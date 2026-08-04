@@ -58,6 +58,7 @@ const (
 	TypePlayerListDelta   = canon.TypePlayerListDelta
 	TypeGameOver          = canon.TypeGameOver
 	TypeMatchmakingStatus = canon.TypeMatchmakingStatus
+	TypeMatchEnd          = canon.TypeMatchEnd
 )
 
 // ── C2S ───────────────────────────────────────────────────
@@ -87,6 +88,7 @@ type (
 	GameOver          = canon.GameOver
 	WaitingPlayer     = canon.WaitingPlayer
 	MatchmakingStatus = canon.MatchmakingStatus
+	MatchEnd          = canon.MatchEnd
 )
 
 const (
